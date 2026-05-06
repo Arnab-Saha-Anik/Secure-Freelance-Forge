@@ -1,0 +1,41 @@
+Project Name: "Freelance Forge"
+
+Tech Stack: 
+
+● Language: Javascript
+● Framework: MERN Stack (MongoDB, Express.js, React.js, Node.js)
+● Styling: CSS
+● Database: MongoDB
+● ORM: Mongoose
+● Deployment: Vercel
+
+
+Functional requirements:
+
+Module 1: User Management and Dashboards
+
+1. User Registration & Login: There will be a Sign-up option to register and a login option to authenticate freelancers and clients using login credentials.
+2. Profile Information: Users can create and update their profiles with skills, portfolios, and experience.
+3. User Verification: Email/phone verification using a code generator for authentication.
+4. Admin profile: Admin login and signup. Also, the admin can edit user roles and monitor.
+5. Freelancer Dashboard: Shows earnings, reviews, learning materials, and profile statistics.
+6. Client Dashboard: Displays posted projects, bids received, and project progress.
+     
+
+Module 2: Job and Project Management
+
+7. Project Posting: Clients can post projects with detailed requirements. 
+8. Bidding system: Freelancers can place bids on projects with proposals. 
+9. Project Deadline & Budget Management: Clients set deadlines and budgets for projects. 
+10. Activity History: Users can view their activity history for a summary of recent actions.
+11. Direct Hire: Clients can directly hire freelancers without bidding.
+
+
+Module 3: Payment, Reviews and Search
+
+12. Freelancer Rating System: Clients can rate freelancers after project completion.
+13. Client Rating System: Freelancers can review clients based on collaboration experience.
+14. Secured Payment Options: Paypal, Credit Cards, money transfer.
+15. Project Updates: Project tracking, and status updates.
+16. Search Functionality: Users search for freelancers, clients, or projects using keywords, skills, or location.
+17. Escrow System: All the payable money of in-progress projects will be held by the system until the projects are done.
