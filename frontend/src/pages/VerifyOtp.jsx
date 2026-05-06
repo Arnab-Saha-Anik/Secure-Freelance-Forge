@@ -9,6 +9,7 @@ const VerifyOTP = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const email = location.state?.email;
+  const mode = location.state?.mode || "register";
 
   useEffect(() => {
     document.title = "Freelance Forge - Verify OTP";
@@ -30,9 +31,24 @@ const VerifyOTP = () => {
     }
 
     try {
-      const response = await axios.post("http://localhost:5000/users/verify-otp", { email, otp });
+      const endpoint = mode === "login" ? "/users/verify-login-otp" : "/users/verify-otp";
+      const response = await axios.post(`http://localhost:5000${endpoint}`, { email, otp });
       setSuccessMessage(response.data.message);
       setErrorMessage("");
+
+      if (mode === "login") {
+        localStorage.setItem("token", response.data.token);
+
+        if (response.data.role?.toLowerCase() === "freelancer") {
+          localStorage.setItem("freelancerToken", response.data.token);
+          navigate("/freelancer-dashboard");
+        } else if (response.data.role?.toLowerCase() === "client") {
+          localStorage.setItem("clientToken", response.data.token);
+          navigate("/client-dashboard");
+        }
+        return;
+      }
+
       alert("Account verified successfully! Redirecting to login...");
       navigate("/login");
     } catch (err) {

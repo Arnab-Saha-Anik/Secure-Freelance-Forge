@@ -51,7 +51,7 @@ const Register = () => {
       }
 
       alert("An OTP has been sent to your email (check spam if you don't find). Please verify to complete registration.");
-      navigate("/verify-otp", { state: { email } });
+      navigate("/verify-otp", { state: { email, mode: "register" } });
 
       await axios.post("http://localhost:5000/users/register", {
         name: fullName,

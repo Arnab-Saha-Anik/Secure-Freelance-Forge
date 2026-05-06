@@ -14,6 +14,25 @@ const { rsaEncrypt, rsaDecrypt } = require('../utils/cryptoUtils');
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+const createTransporter = () => nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+const sendOtpEmail = async (email, otp) => {
+  const transporter = createTransporter();
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: "Verify Your Email - OTP",
+    text: `Your OTP is: ${otp}`,
+  });
+};
+
 router.post("/register", async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -63,7 +82,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email, password, and role are required' });
   }
   try {
-      // Modified: Encrypt incoming email to find the user in the database
+    // Step 1: Validate the primary credentials before issuing an OTP.
       const user = await User.findOne({ email: rsaEncrypt(email) });
       if (!user) {
           return res.status(400).json({ error: 'Invalid email or password' });
@@ -80,15 +99,78 @@ router.post('/login', async (req, res) => {
           return res.status(403).json({ error: 'Selected role does not match your account role' });
       }
 
-      // Modified: Decrypt user data for JWT and response
-      const decryptedName = rsaDecrypt(user.name);
-      const token = jwt.sign({ id: user._id, name: decryptedName, role: decryptedRole }, process.env.JWT_SECRET, { expiresIn: '1h' });
+      const otp = generateOTP();
 
-      res.status(200).json({ message: 'Login successful', token, role: decryptedRole });
+      global.loginOtpStore = global.loginOtpStore || {};
+      global.loginOtpStore[email] = {
+        otp,
+        userId: user._id.toString(),
+        name: user.name,
+        role: user.role,
+        email: user.email,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      };
+
+      await sendOtpEmail(email, otp);
+
+      res.status(200).json({
+        message: 'OTP sent to your email. Please verify to complete login.',
+        email,
+      });
   } catch (err) {
       res.status(500).json({ error: err.message });
   }
 }); 
+
+router.post('/verify-login-otp', async (req, res) => {
+  const { email, otp } = req.body;
+
+  try {
+    if (!email || !otp) {
+      return res.status(400).json({ error: 'Email and OTP are required' });
+    }
+
+    if (!global.loginOtpStore || !global.loginOtpStore[email]) {
+      return res.status(400).json({ error: 'OTP expired or invalid. Please login again.' });
+    }
+
+    const pendingLogin = global.loginOtpStore[email];
+
+    if (pendingLogin.expiresAt < Date.now()) {
+      delete global.loginOtpStore[email];
+      return res.status(400).json({ error: 'OTP expired or invalid. Please login again.' });
+    }
+
+    if (pendingLogin.otp !== otp) {
+      return res.status(400).json({ error: 'Invalid OTP' });
+    }
+
+    const user = await User.findById(pendingLogin.userId);
+    if (!user) {
+      delete global.loginOtpStore[email];
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const decryptedName = rsaDecrypt(user.name);
+    const decryptedRole = rsaDecrypt(user.role);
+    const token = jwt.sign(
+      { id: user._id, name: decryptedName, role: decryptedRole },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    delete global.loginOtpStore[email];
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,
+      role: decryptedRole,
+      name: decryptedName,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.put("/update", verifyToken, async (req, res) => {
   const { name, currentPassword, newPassword, confirmPassword } = req.body;

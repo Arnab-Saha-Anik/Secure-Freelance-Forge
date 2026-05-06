@@ -6,7 +6,7 @@ const Login = () => {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
-    userType: "default",
+    role: "default",
   });
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -42,24 +42,9 @@ const Login = () => {
         role,
       });
 
-      const backendRole = response.data.role;
-
-      if (backendRole.toLowerCase() !== role.toLowerCase()) {
-        setErrorMessage("Selected role does not match your account role.");
-        return;
-      }
-
-      setSuccessMessage("Login successful!");
+      setSuccessMessage(response.data.message || "OTP sent to your email.");
       setErrorMessage("");
-      localStorage.setItem("token", response.data.token);
-
-      if (backendRole.toLowerCase() === "freelancer") {
-        localStorage.setItem("freelancerToken", response.data.token);
-        navigate("/freelancer-dashboard");
-      } else if (backendRole.toLowerCase() === "client") {
-        localStorage.setItem("clientToken", response.data.token);
-        navigate("/client-dashboard");
-      }
+      navigate("/verify-otp", { state: { email: response.data.email, mode: "login" } });
     } catch (err) {
       console.log(err.response);
       setErrorMessage(err.response?.data?.error || "An error occurred.");
