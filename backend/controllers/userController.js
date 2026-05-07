@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcrypt');
 const User = require('../models/userModel');
 const jwt = require('jsonwebtoken');
 const { verifyToken } = require("../middleware/authMiddleware");
@@ -11,6 +10,7 @@ const Project = require('../models/projectModel');
 const nodemailer = require("nodemailer"); 
 // Modified: Use RSA for User model and ECC for others (like Activity)
 const { rsaEncrypt, rsaDecrypt, eccEncrypt, eccDecrypt, decrypt } = require('../utils/cryptoUtils');
+const { hashPassword, comparePassword } = require('../utils/hash');
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -88,7 +88,7 @@ router.post('/login', async (req, res) => {
           return res.status(400).json({ error: 'Invalid email or password' });
       }
 
-      const isMatch = await bcrypt.compare(password, user.password);
+      const isMatch = await comparePassword(password, user.password);
       if (!isMatch) {
           return res.status(400).json({ error: 'Invalid email or password' });
       }
@@ -185,12 +185,12 @@ router.put("/update", verifyToken, async (req, res) => {
     }
 
     if (currentPassword) {
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      const isMatch = await comparePassword(currentPassword, user.password);
       if (!isMatch) {
         return res.status(400).json({ error: "Current password is incorrect" });
       }
       
-      if (newPassword && (await bcrypt.compare(newPassword, user.password))) {
+      if (newPassword && (await comparePassword(newPassword, user.password))) {
         return res.status(400).json({ error: "New password cannot be the same as the current password" });
       }
       
@@ -199,8 +199,7 @@ router.put("/update", verifyToken, async (req, res) => {
       }
       
       if (newPassword) {
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(newPassword, salt);
+        user.password = await hashPassword(newPassword);
       }
     }
     
@@ -238,12 +237,12 @@ router.put("/client/update", verifyToken, async (req, res) => {
     }
 
     if (currentPassword) {
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      const isMatch = await comparePassword(currentPassword, user.password);
       if (!isMatch) {
         return res.status(400).json({ error: "Current password is incorrect" });
       }
 
-      if (newPassword && (await bcrypt.compare(newPassword, user.password))) {
+      if (newPassword && (await comparePassword(newPassword, user.password))) {
         return res.status(400).json({ error: "New password cannot be the same as the current password" });
       }
 
@@ -252,8 +251,7 @@ router.put("/client/update", verifyToken, async (req, res) => {
       }
 
       if (newPassword) {
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(newPassword, salt);
+        user.password = await hashPassword(newPassword);
       }
     }
 
@@ -287,7 +285,7 @@ router.delete("/delete", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid password" });
     }
@@ -316,7 +314,7 @@ router.delete("/client/delete", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "The email you provided is not associated with your account." });
     }
 
-    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    const isMatch = await comparePassword(currentPassword, user.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid password" });
     }
@@ -387,7 +385,7 @@ router.post("/validate", async (req, res) => {
       return res.status(400).json({ error: "Invalid email or password." });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid email or password." });
     }
@@ -480,9 +478,7 @@ router.post("/verify-otp", async (req, res) => {
       return res.status(400).json({ error: "Invalid OTP" });
     }
 
-    // New Change: Salt is generated and included automatically by bcrypt.hash
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const hashedPassword = await hashPassword(password);
 
     // Modified: Encrypt data before saving to the database
     const user = new User({

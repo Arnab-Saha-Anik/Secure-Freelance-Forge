@@ -1,12 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const bcrypt = require("bcrypt");
 const FreelancerInformation = require("../models/freelancerInformationModel");
 const User = require("../models/userModel");
 const { verifyToken } = require("../middleware/authMiddleware");
 const Activity = require("../models/activityModel");
 // Modified: Use RSA for FreelancerInformation and ECC for others
 const { rsaEncrypt, rsaDecrypt, eccEncrypt, eccDecrypt, decrypt } = require('../utils/cryptoUtils');
+const { comparePassword } = require('../utils/hash');
 
 router.get("/:userId", verifyToken, async (req, res) => {
   try {
@@ -147,7 +147,7 @@ router.delete("/delete", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid password" });
     }

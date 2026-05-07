@@ -11,6 +11,7 @@ const FreelancerInformation = require("../models/freelancerInformationModel");
 const router = express.Router();
 // Modified: Use RSA for User and ECC for Project. Import unified decrypt.
 const { eccEncrypt, eccDecrypt, rsaEncrypt, rsaDecrypt, decrypt } = require('../utils/cryptoUtils');
+const { hashPassword, comparePassword } = require('../utils/hash');
 
 // Schedule a task to run every day at midnight
 cron.schedule("0 0 * * *", async () => {
@@ -304,13 +305,13 @@ router.put("/client/update", verifyToken, async (req, res) => {
 
     
     if (currentPassword) {
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      const isMatch = await comparePassword(currentPassword, user.password);
       if (!isMatch) {
         return res.status(400).json({ error: "Current password is incorrect" });
       }
 
       
-      if (newPassword && (await bcrypt.compare(newPassword, user.password))) {
+      if (newPassword && (await comparePassword(newPassword, user.password))) {
         return res.status(400).json({ error: "New password cannot be the same as the current password" });
       }
 
@@ -321,8 +322,7 @@ router.put("/client/update", verifyToken, async (req, res) => {
 
       
       if (newPassword) {
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(newPassword, salt);
+        user.password = await hashPassword(newPassword);
       }
     }
 

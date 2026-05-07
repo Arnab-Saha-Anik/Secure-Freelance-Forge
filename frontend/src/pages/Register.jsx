@@ -50,18 +50,18 @@ const Register = () => {
         return;
       }
 
-      alert("An OTP has been sent to your email (check spam if you don't find). Please verify to complete registration.");
-      navigate("/verify-otp", { state: { email, mode: "register" } });
-
-      await axios.post("http://localhost:5000/users/register", {
+      const registerResponse = await axios.post("http://localhost:5000/users/register", {
         name: fullName,
         email,
         password,
         role,
       });
+
+      alert(registerResponse.data.message || "An OTP has been sent to your email. Please verify to complete registration.");
+      navigate("/verify-otp", { state: { email, mode: "register" } });
     } catch (err) {
       console.error(err.response);
-      setErrorMessage(err.response?.data?.message || "An error occurred.");
+      setErrorMessage(err.response?.data?.message || err.response?.data?.error || "An error occurred.");
     }
   };
 
