@@ -18,6 +18,7 @@ const styles = {
   bidButton: { padding: "10px 20px", backgroundColor: "#007BFF", color: "#FFFFFF", border: "none", borderRadius: "5px", cursor: "pointer" },
   rejectButton: { padding: "10px 20px", backgroundColor: "#DC3545", color: "#FFFFFF", border: "none", borderRadius: "5px", cursor: "pointer" },
   acceptButton: { padding: "10px 20px", backgroundColor: "#28A745", color: "#FFFFFF", border: "none", borderRadius: "5px", cursor: "pointer" },
+  editButton: { padding: "10px 20px", backgroundColor: "#FFC107", color: "#000000", border: "none", borderRadius: "5px", cursor: "pointer" },
 };
 
 const FreelancerDashboard = () => {
@@ -72,6 +73,37 @@ const FreelancerDashboard = () => {
   const token = localStorage.getItem("freelancerToken");
   const userId = token ? JSON.parse(atob(token.split(".")[1])).id : null; 
 
+  const fetchProjects = useCallback(async () => {
+    try {
+      const response = await fetch("http://localhost:5000/projects", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch projects");
+      }
+
+      const data = await response.json();
+
+      // Filter projects based on the freelancer's ID
+      const acceptedProjects = data.filter(
+        (project) => project.status === "accepted" && project.acceptedFreelancer === userId
+      );
+      const otherProjects = data.filter(
+        (project) => project.status !== "accepted"
+      );
+
+      // Combine accepted projects on top and other projects below
+      setProjects([...acceptedProjects, ...otherProjects]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, userId]);
+
   // Then initialize the state
 
   useEffect(() => {
@@ -107,6 +139,37 @@ const FreelancerDashboard = () => {
 
     fetchUserInfo(); 
   }, [navigate, userId, token]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    const query = new URLSearchParams(window.location.search);
+    const sessionId = query.get("session_id");
+
+    if (sessionId) {
+      const verifyPayment = async () => {
+        try {
+          const response = await fetch(`http://localhost:5000/payments/verify-session/${sessionId}`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const data = await response.json();
+          if (response.ok) {
+            alert(data.message || "Operation verified successfully!");
+            // Clean up the URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+            fetchProjects(); // Refresh projects
+          } else {
+            console.error("Payment verification failed:", data.error);
+          }
+        } catch (error) {
+          console.error("Error verifying payment:", error);
+        }
+      };
+      verifyPayment();
+    }
+  }, [token, navigate, fetchProjects]);
 
   useEffect(() => {
     const fetchProfileExistence = async () => {
@@ -328,6 +391,25 @@ const FreelancerDashboard = () => {
   };
   
 
+  const handleMarkNotificationsAsRead = async () => {
+    try {
+      const response = await fetch("http://localhost:5000/notifications/mark-as-read", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      } else {
+        console.error("Failed to mark notifications as read.");
+      }
+    } catch (error) {
+      console.error("Error marking notifications as read:", error);
+    }
+  };
+
   const handleDeleteNotification = async (notificationId) => {
     try {
       const response = await fetch(`http://localhost:5000/notifications/${notificationId}`, {
@@ -514,36 +596,7 @@ const FreelancerDashboard = () => {
     }
   }, [token]);
 
-  const fetchProjects = useCallback(async () => {
-    try {
-      const response = await fetch("http://localhost:5000/projects", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch projects");
-      }
-
-      const data = await response.json();
-
-      // Filter projects based on the freelancer's ID
-      const acceptedProjects = data.filter(
-        (project) => project.status === "accepted" && project.acceptedFreelancer === userId
-      );
-      const otherProjects = data.filter(
-        (project) => project.status !== "accepted"
-      );
-
-      // Combine accepted projects on top and other projects below
-      setProjects([...acceptedProjects, ...otherProjects]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [token, userId]); // Add token and userId as dependencies
 
   const fetchMyReviews = useCallback(async () => {
     try {
@@ -692,6 +745,43 @@ const FreelancerDashboard = () => {
     } catch (error) {
       console.error("Error submitting project completion URL:", error);
       alert("An error occurred while submitting the project completion URL.");
+    }
+  };
+
+  const handleDeleteCompletionUrl = async (projectId) => {
+    if (!window.confirm("Are you sure you want to delete the shared project link?")) return;
+    
+    try {
+      const response = await fetch(`http://localhost:5000/projects/delete-completion/${projectId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("freelancerToken")}`,
+        },
+      });
+  
+      if (response.ok) {
+        alert("Project completion URL deleted successfully.");
+        
+        // Update both the projects and filteredProjects arrays
+        const updatedProjects = projects.map(project => 
+          project._id === projectId ? { ...project, completionUrl: "" } : project
+        );
+        setProjects(updatedProjects);
+        
+        if (projectSearchQuery) {
+          const updatedFilteredProjects = filteredProjects.map(project => 
+            project._id === projectId ? { ...project, completionUrl: "" } : project
+          );
+          setFilteredProjects(updatedFilteredProjects);
+        }
+        
+      } else {
+        const data = await response.json();
+        alert(data.error || "Failed to delete project completion URL.");
+      }
+    } catch (error) {
+      console.error("Error deleting project completion URL:", error);
+      alert("An error occurred while deleting the project completion URL.");
     }
   };
 
@@ -1004,12 +1094,30 @@ const FreelancerDashboard = () => {
       >
         {/* Notification Button */}
         <button
-          onClick={() => setShowNotifications(!showNotifications)}
+          onClick={() => {
+            const newState = !showNotifications;
+            setShowNotifications(newState);
+            if (newState) {
+              handleMarkNotificationsAsRead();
+            }
+          }}
           style={styles.notificationButton}
           onMouseEnter={(e) => (e.target.style.backgroundColor = "#0056b3")}
           onMouseLeave={(e) => (e.target.style.backgroundColor = "#007BFF")}
         >
           Notifications {showNotifications ? "▲" : "▼"}
+          {notifications.filter(n => !n.read).length > 0 && (
+            <span style={{
+              marginLeft: "5px",
+              backgroundColor: "#FF0000",
+              color: "#FFFFFF",
+              borderRadius: "50%",
+              padding: "2px 6px",
+              fontSize: "12px"
+            }}>
+              {notifications.filter(n => !n.read).length}
+            </span>
+          )}
         </button>
 
         {/* Notifications Dropdown */}
@@ -1020,6 +1128,7 @@ const FreelancerDashboard = () => {
                 <div
                   key={notification._id}
                   style={{padding: "10px", borderBottom: "1px solid #ddd", display: "flex", justifyContent: "space-between", alignItems: "center", color: "#000000",
+                    backgroundColor: notification.read ? "#FFFFFF" : "#F0F8FF"
                   }}
                 >
                   <p style={{ margin: 0 }}>{notification.message}</p>
@@ -1217,7 +1326,7 @@ const FreelancerDashboard = () => {
     </button>
 
     {/* Show URL update button if completion percentage is 100% */}
-    {project.completedpercentage === 100 && (
+    {Number(project.completedpercentage) === 100 && (
       <button
         onClick={() => {
           const url = prompt("Enter the URL of the completed project:");
@@ -1259,7 +1368,32 @@ const FreelancerDashboard = () => {
             <p style={{ marginBottom: "10px", fontWeight: "bold", color: "#FFD700" }}>
               Current Completion: {project.completedpercentage || 0}%
             </p>
-            {project.completedpercentage === 100 && !project.completionUrl && (
+            {project.approvalStatus !== "Approved" && (
+              <button
+                onClick={() => {
+                  const percentage = prompt(
+                    `Enter the updated project completion percentage (0-100):`,
+                    project.completedpercentage || 0
+                  );
+                  if (percentage !== null) {
+                    updateCompletionPercentage(project._id, percentage);
+                  }
+                }}
+                style={{
+                  padding: "10px",
+                  backgroundColor: "#007BFF",
+                  color: "#FFFFFF",
+                  border: "none",
+                  borderRadius: "5px",
+                  cursor: "pointer",
+                  marginRight: "10px",
+                  marginBottom: "10px"
+                }}
+              >
+                Update Completion Percentage
+              </button>
+            )}
+            {Number(project.completedpercentage) === 100 && !project.completionUrl && (
               <button
                 onClick={() => {
                   const url = prompt("Enter the URL of the completed project:");
@@ -1282,7 +1416,31 @@ const FreelancerDashboard = () => {
             )}
 
             {project.completionUrl && project.approvalStatus === "Pending" && (
-              <p style={{ color: "#FFC107", fontWeight: "bold" }}>Waiting for Client's Approval</p>
+              <div style={{ marginTop: "10px", marginBottom: "10px" }}>
+                <p style={{ color: "#FFC107", fontWeight: "bold" }}>Waiting for Client's Approval</p>
+                <p style={{ color: "#007BFF", fontWeight: "bold" }}>
+                  Shared URL: <a href={project.completionUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#007BFF", textDecoration: "underline" }}>{project.completionUrl}</a>
+                </p>
+                <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
+                  <button
+                    onClick={() => {
+                      const url = prompt("Edit the completion URL:", project.completionUrl);
+                      if (url) {
+                        handleSubmitCompletionUrl(project._id, url);
+                      }
+                    }}
+                    style={styles.editButton}
+                  >
+                    Edit Link
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCompletionUrl(project._id)}
+                    style={styles.rejectButton}
+                  >
+                    Delete Link
+                  </button>
+                </div>
+              </div>
             )}
 
             {project.approvalStatus === "Approved" ? (
@@ -1413,22 +1571,7 @@ const FreelancerDashboard = () => {
                   </span>
                 )}
               </div>
-            ) : (
-              <button
-                style={styles.bidButton}
-                onClick={() => {
-                  const percentage = prompt(
-                    `Enter the project completion percentage (0-100):`,
-                    project.completedpercentage || 0
-                  );
-                  if (percentage !== null) {
-                    updateCompletionPercentage(project._id, percentage);
-                  }
-                }}
-              >
-                Update Completion
-              </button>
-            )}
+            ) : null}
           </>
         ) : null
       ) : myBid ? (

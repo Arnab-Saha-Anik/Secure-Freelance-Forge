@@ -1,21 +1,42 @@
 const express = require("express");
 const router = express.Router();
 const Bid = require("../models/bidModel");
-const Notification = require("../models/notificationModel"); // Import the Notification model
+const Notification = require("../models/notificationModel");
 const { verifyToken } = require("../middleware/authMiddleware");
 const Project = require("../models/projectModel");
 const User = require("../models/userModel");
-const Activity = require("../models/activityModel"); // Import the Activity model
-const DirectHire = require("../models/directHireModel"); // Import the DirectHire model
-const Review = require("../models/reviewModel"); // Import the Review model
-const FreelancerInformation = require("../models/freelancerInformationModel"); // Import the FreelancerInformation model
+const Activity = require("../models/activityModel");
+const DirectHire = require("../models/directHireModel");
+const Review = require("../models/reviewModel");
+const FreelancerInformation = require("../models/freelancerInformationModel");
+// Modified: Use unified decrypt helper to handle mixed RSA/ECC data
+const { eccEncrypt, eccDecrypt, rsaDecrypt, decrypt } = require('../utils/cryptoUtils');
 
 // Route to fetch accepted bids
 router.get("/accepted", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id; // Assuming `verifyToken` adds `user` to `req`
-    const bids = await Bid.find({ freelancerId: userId, status: "accepted" }).populate("projectId", "title client");
-    res.status(200).json(bids);
+    const allBids = await Bid.find({ status: "accepted" });
+    
+    // Modified: Filter by decrypted freelancerId and decrypt projects
+    const filteredBids = allBids.filter(b => decrypt(b.freelancerId) === userId);
+    
+    const decryptedBids = await Promise.all(filteredBids.map(async (bid) => {
+      const decryptedProjectId = decrypt(bid.projectId);
+      const project = await Project.findById(decryptedProjectId).select("title client");
+      
+      return {
+        ...bid.toObject(),
+        projectId: project ? {
+          ...project.toObject(),
+          title: decrypt(project.title),
+          client: project.client, // Keep encrypted client ID
+        } : null,
+        amount: decrypt(bid.amount),
+      };
+    }));
+
+    res.status(200).json(decryptedBids);
   } catch (error) {
     console.error("Error fetching accepted bids:", error);
     res.status(500).json({ error: "Failed to fetch accepted bids" });
@@ -27,17 +48,27 @@ router.get("/selected", verifyToken, async (req, res) => {
   try {
     const freelancerId = req.user.id; // Assuming `verifyToken` adds `user` to `req`
 
-    // Fetch bids for the freelancer and populate associated projects
-    const selectedBids = await Bid.find({ freelancerId })
-      .populate({
-        path: "projectId",
-        match: { status: "selected" }, // Match projects with status "selected"
-        select: "title description budget deadline client", // Explicitly select required fields
-        populate: {
-          path: "client", // Populate the client field
-          select: "name email", // Select only the name and email fields
-        },
-      });
+    // Fetch all bids and filter manually because encrypted projectId/freelancerId breaks DB matching
+    const allBids = await Bid.find();
+
+    const selectedBids = [];
+    for (const bid of allBids) {
+      if (decrypt(bid.freelancerId) === freelancerId) {
+        const decryptedProjectId = decrypt(bid.projectId);
+        const project = await Project.findById(decryptedProjectId).select("title description budget deadline client status");
+        
+        if (project && decrypt(project.status) === "selected") {
+          // Manually populate client for the project
+          const decryptedClientId = decrypt(project.client);
+          const clientUser = await User.findById(decryptedClientId).select("name email");
+          
+          const bidObj = bid.toObject();
+          bidObj.projectId = project.toObject();
+          bidObj.projectId.client = clientUser;
+          selectedBids.push(bidObj);
+        }
+      }
+    }
 
     // Filter out bids where the project does not match the "selected" status
     const filteredBids = selectedBids.filter((bid) => bid.projectId !== null);
@@ -46,19 +77,19 @@ router.get("/selected", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "No selected bids available." });
     }
 
-    // Format the response to include project and client details
+    // Modified: Decrypt projects for selected bids using unified decrypt
     const formattedBids = filteredBids.map((bid) => ({
       bidId: bid._id,
-      bidAmount: bid.amount,
+      bidAmount: decrypt(bid.amount),
       project: {
-        title: bid.projectId.title,
-        description: bid.projectId.description,
-        budget: bid.projectId.budget,
-        deadline: bid.projectId.deadline,
+        title: decrypt(bid.projectId.title),
+        description: decrypt(bid.projectId.description),
+        budget: decrypt(bid.projectId.budget),
+        deadline: decrypt(bid.projectId.deadline),
       },
       client: {
-        name: bid.projectId.client?.name || "N/A",
-        email: bid.projectId.client?.email || "N/A",
+        name: rsaDecrypt(bid.projectId.client?.name || ""), // Explicitly RSA for User
+        email: rsaDecrypt(bid.projectId.client?.email || ""), // Explicitly RSA for User
       },
     }));
 
@@ -72,36 +103,43 @@ router.get("/selected", verifyToken, async (req, res) => {
 // Route to fetch bids for a specific project
 router.get("/:projectId", verifyToken, async (req, res) => {
   try {
-    const bids = await Bid.find({ projectId: req.params.projectId })
-      .populate({
-        path: "freelancerId",
-        select: "name email",
-      });
-
-    // For each bid, add avgRating and freelancer profile info
+    const allBids = await Bid.find();
+    const bids = allBids.filter(b => decrypt(b.projectId) === req.params.projectId);
+    
+    // Modified: Manually fetch freelancer info since ref is broken
     const enhancedBids = await Promise.all(
       bids.map(async (bid) => {
+        const decryptedFreelancerId = decrypt(bid.freelancerId);
+        const freelancer = await User.findById(decryptedFreelancerId).select("name email");
+        if (!freelancer) return null;
+
         // Calculate average rating
         let avgRating = 0;
-        const reviews = await Review.find({ receiverId: bid.freelancerId._id });
+        const allReviews = await Review.find();
+        const reviews = allReviews.filter(r => decrypt(r.receiverId) === decryptedFreelancerId);
         if (reviews.length > 0) {
-          avgRating =
-            reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length;
+          avgRating = reviews.reduce((sum, r) => sum + parseInt(decrypt(r.rating)), 0) / reviews.length;
         }
 
         // Fetch freelancer information
-        const freelancerInfo = await FreelancerInformation.findOne({ userId: bid.freelancerId._id });
+        const allFreelancerInfo = await FreelancerInformation.find();
+        const freelancerInfo = allFreelancerInfo.find(fi => decrypt(fi.userId) === decryptedFreelancerId);
 
         return {
           ...bid.toObject(),
+          amount: decrypt(bid.amount),
           freelancerId: {
-            ...bid.freelancerId.toObject(),
+            ...freelancer.toObject(),
+            name: rsaDecrypt(freelancer.name),
+            email: rsaDecrypt(freelancer.email),
             avgRating: avgRating ? avgRating.toFixed(1) : "0",
             profile: freelancerInfo
               ? [{
-                  skills: freelancerInfo.skills || [],
-                  portfolio: freelancerInfo.portfolio || "",
-                  experience: freelancerInfo.experience || "",
+                  skills: Array.isArray(freelancerInfo.skills)
+                    ? freelancerInfo.skills.map(s => rsaDecrypt(s ?? ""))
+                    : [],
+                  portfolio: rsaDecrypt(freelancerInfo.portfolio ?? ""),
+                  experience: rsaDecrypt(freelancerInfo.experience ?? ""),
                 }]
               : [],
           },
@@ -109,8 +147,9 @@ router.get("/:projectId", verifyToken, async (req, res) => {
       })
     );
 
-    res.status(200).json(enhancedBids);
+    res.status(200).json(enhancedBids.filter(b => b !== null));
   } catch (error) {
+    console.error("Error fetching bids:", error);
     res.status(500).json({ error: "Failed to fetch bids" });
   }
 });
@@ -121,12 +160,17 @@ router.get("/:projectId/my-bid", verifyToken, async (req, res) => {
     const { projectId } = req.params;
     const freelancerId = req.user.id; // Assuming `verifyToken` adds `user` to `req`
 
-    const bid = await Bid.findOne({ projectId, freelancerId });
+    const allBids = await Bid.find();
+    const bidsForProject = allBids.filter(b => decrypt(b.projectId) === projectId);
+    const bid = bidsForProject.find(b => decrypt(b.freelancerId) === freelancerId);
     if (!bid) {
       return res.status(404).json({ error: "No bid found for this project." });
     }
 
-    res.status(200).json(bid);
+    res.status(200).json({
+      ...bid.toObject(),
+      amount: eccDecrypt(bid.amount),
+    });
   } catch (error) {
     console.error("Error fetching bid:", error);
     res.status(500).json({ error: "Failed to fetch bid." });
@@ -140,43 +184,44 @@ router.post("/:projectId/bid", verifyToken, async (req, res) => {
     const { bidAmount } = req.body;
     const freelancerId = req.user.id;
 
-    const project = await Project.findById(projectId).populate("client", "email");
+    const project = await Project.findById(projectId);
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
     }
 
     // Check project status
-    if (project.status === "accepted") {
+    if (decrypt(project.status) === "accepted") {
       return res.status(400).json({
         error: "Bidding is not allowed as the project is already accepted.",
       });
     }
 
     // Check if the freelancer has already submitted a bid for this project
-    const existingBid = await Bid.findOne({ projectId, freelancerId });
+    const allBids = await Bid.find();
+    const existingBid = allBids.find(b => decrypt(b.projectId) === projectId && decrypt(b.freelancerId) === freelancerId);
     if (existingBid) {
       return res.status(400).json({ error: "You have already submitted a bid for this project." });
     }
 
-    // Create a new bid
+    // Modified: Encrypt projectId, bid amount and freelancerId
     const newBid = await Bid.create({
-      projectId,
-      freelancerId,
-      amount: bidAmount,
+      projectId: eccEncrypt(projectId),
+      freelancerId: eccEncrypt(freelancerId),
+      amount: eccEncrypt(bidAmount.toString()),
     });
 
     const freelancer = await User.findById(req.user.id).select("email");
 
-    // Log the activity
+    // Modified: Decrypt title for notification/log and encrypt messages and userId
+    const decryptedTitle = decrypt(project.title);
     await Activity.create({
-      userId: freelancerId,
-      action: `You placed a bid of $${bidAmount} on project "${project.title}".`,
+      userId: eccEncrypt(freelancerId),
+      action: eccEncrypt(`You placed a bid of $${bidAmount} on project "${decryptedTitle}".`),
     });
 
-    // Create a notification for the client
     await Notification.create({
-      user: project.client._id,
-      message: `Freelancer (${freelancer.email}) has posted a bid for project "${project.title}".`,
+      user: project.client, // Already encrypted
+      message: eccEncrypt(`A new bid of $${bidAmount} has been placed on your project "${decryptedTitle}".`),
     });
 
     res.status(201).json({ message: "Bid submitted successfully.", bid: newBid });
@@ -191,38 +236,40 @@ router.put("/select/:bidId", verifyToken, async (req, res) => {
   try {
     const { bidId } = req.params;
 
-    const bid = await Bid.findById(bidId).populate("freelancerId", "email").populate("projectId", "title client");
-
+    const bid = await Bid.findById(bidId);
     if (!bid) {
       return res.status(404).json({ error: "Bid not found" });
     }
 
-    // Fetch the project document
-    const project = await Project.findById(bid.projectId._id);
+    // Manually fetch project and freelancer info
+    const decryptedProjectId = decrypt(bid.projectId);
+    const project = await Project.findById(decryptedProjectId);
+    const freelancer = await User.findById(decrypt(bid.freelancerId));
 
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
     }
 
-    // Check if escrow is funded
-    if (project.escrowStatus === "Not Funded") {
+    // Check if escrow is funded - Modified: Decrypt for comparison
+    if (decrypt(project.escrowStatus) === "Not Funded") {
       return res.status(400).json({ error: "Escrow must be funded before selecting a bid." });
     }
 
-    // Update the project status to "selected"
-    project.status = "selected";
+    // Update the project status to "selected" - Modified: Encrypt status
+    project.status = eccEncrypt("selected");
     await project.save();
 
-    // Notify the freelancer
+    // Notify the freelancer - Modified: Decrypt ID and message
     await Notification.create({
-      user: bid.freelancerId._id,
-      message: `Your bid of $${bid.amount} for the project "${project.title}" has been selected.`,
+      user: decrypt(bid.freelancerId),
+      message: eccEncrypt(`Your bid of $${decrypt(bid.amount)} for the project "${decrypt(project.title)}" has been selected.`),
     });
 
-    // Log the activity for the client
+    // Log the activity for the client - Modified: Decrypt IDs and messages
+    const decryptedClient = decrypt(project.client);
     await Activity.create({
-      userId: project.client,
-      action: `You selected the bid of $${bid.amount} for the project "${project.title}" to the freelancer (${bid.freelancerId.email}).`,
+      userId: eccEncrypt(decryptedClient),
+      action: eccEncrypt(`You selected the bid of $${decrypt(bid.amount)} for the project "${decrypt(project.title)}" to the freelancer (${rsaDecrypt(freelancer.email)}).`),
     });
 
     res.status(200).json({ message: "Bid selected successfully.", bid });
@@ -237,37 +284,48 @@ router.put("/accept/:bidId", verifyToken, async (req, res) => {
   try {
     const { bidId } = req.params;
 
-    const bid = await Bid.findById(bidId).populate("projectId freelancerId");
-
+    const bid = await Bid.findById(bidId);
     if (!bid) {
-      return res.status(404).json({ error: "Bid not found." });
+      return res.status(404).json({ error: "Bid not found" });
     }
 
-    const projectId = bid.projectId._id;
+    const decryptedProjectId = decrypt(bid.projectId);
+    const project = await Project.findById(decryptedProjectId);
+
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
 
     // Update the project status to "accepted" and store the accepted freelancer and bid amount
-    await Project.findByIdAndUpdate(projectId, {
-      status: "accepted",
-      acceptedFreelancer: bid.freelancerId._id,
-      acceptedmoney: bid.amount,
+    await Project.findByIdAndUpdate(decryptedProjectId, {
+      status: eccEncrypt("accepted"),
+      acceptedFreelancer: bid.freelancerId, // Already encrypted
+      acceptedmoney: bid.amount, // Already encrypted
     });
 
     // Delete all other bids for the project
-    await Bid.deleteMany({ projectId });
+    const allBids = await Bid.find();
+    const otherBids = allBids.filter(b => decrypt(b.projectId) === decryptedProjectId);
+    await Promise.all(otherBids.map(b => b.deleteOne()));
 
     // Delete all direct hires for the project
-    await DirectHire.deleteMany({ projectId });
+    const allDirectHires = await DirectHire.find();
+    const otherDirectHires = allDirectHires.filter(dh => decrypt(dh.projectId) === decryptedProjectId);
+    await Promise.all(otherDirectHires.map(dh => dh.deleteOne()));
+
+    const freelancerId = decrypt(bid.freelancerId);
+    const freelancer = await User.findById(freelancerId);
 
     // Log the activity
     await Activity.create({
-      userId: bid.freelancerId._id,
-      action: `You accepted the project "${bid.projectId.title}" for $${bid.amount}.`,
+      userId: eccEncrypt(freelancerId),
+      action: eccEncrypt(`You accepted the project "${decrypt(project.title)}" for $${decrypt(bid.amount)}.`),
     });
 
     // Notify the client
     await Notification.create({
-      user: bid.projectId.client,
-      message: `${bid.freelancerId.email} has accepted the project "${bid.projectId.title}" for $${bid.amount}.`,
+      user: project.client, // Already encrypted
+      message: eccEncrypt(`${rsaDecrypt(freelancer.email)} has accepted the project "${decrypt(project.title)}" for $${decrypt(bid.amount)}.`),
     });
 
     res.status(200).json({ message: "Bid accepted successfully.", bid });
@@ -282,39 +340,41 @@ router.delete("/reject/:bidId", verifyToken, async (req, res) => {
   try {
     const { bidId } = req.params;
 
-    const bid = await Bid.findById(bidId).populate("projectId");
+    const decryptedProjectId = decrypt(bid.projectId);
+    const project = await Project.findById(decryptedProjectId);
 
-    if (!bid) {
-      return res.status(404).json({ error: "Bid not found." });
+    if (!project) {
+      return res.status(404).json({ error: "Project not found." });
     }
 
     // Ensure the project status is not "accepted"
-    if (bid.projectId.status === "accepted") {
+    if (decrypt(project.status) === "accepted") {
       return res.status(400).json({ error: "The bid has already been accepted and cannot be rejected." });
     }
-
-    const projectId = bid.projectId._id;
 
     // Delete the bid
     await bid.deleteOne();
 
     // Check if there are any remaining bids for the project
-    const remainingBids = await Bid.find({ projectId });
-    if (remainingBids.length === 0 && bid.projectId.status === "selected") {
+    const allBids = await Bid.find();
+    const remainingBids = allBids.filter(b => decrypt(b.projectId) === decryptedProjectId);
+    
+    if (remainingBids.length === 0 && decrypt(project.status) === "selected") {
       // If no bids are left, update the project status to "pending"
-      await Project.findByIdAndUpdate(projectId, { status: "pending" });
+      project.status = eccEncrypt("pending");
+      await project.save();
     }
 
     // Notify the client
     await Notification.create({
-      user: bid.projectId.client,
-      message: `The selected bid for your project "${bid.projectId.title}" has been rejected by the freelancer.`,
+      user: project.client, // Already encrypted
+      message: eccEncrypt(`The selected bid for your project "${decrypt(project.title)}" has been rejected by the freelancer.`),
     });
 
-    // Log the activity for the client
+    // Log the activity for the freelancer
     await Activity.create({
-      userId: bid.freelancerId._id,
-      action: `You have rejected the bid for the project "${bid.projectId.title}".`,
+      userId: bid.freelancerId, // Already encrypted
+      action: eccEncrypt(`You have rejected the bid for the project "${decrypt(project.title)}".`),
     });
 
     res.status(200).json({ message: "Bid rejected successfully." });
@@ -331,45 +391,39 @@ router.put("/:bidId", verifyToken, async (req, res) => {
     const { bidAmount } = req.body;
     const freelancerId = req.user.id;
 
-    const bid = await Bid.findOne({ _id: bidId, freelancerId }).populate("projectId");
-    if (!bid) {
+    const bid = await Bid.findById(bidId);
+    if (!bid || decrypt(bid.freelancerId) !== freelancerId) {
       return res.status(404).json({ error: "Bid not found or you are not authorized to update this bid." });
     }
 
-    // Check project status
-    if (bid.projectId.status === "accepted") {
+    const decryptedProjectId = decrypt(bid.projectId);
+    const project = await Project.findById(decryptedProjectId);
+
+    const allBids = await Bid.find();
+    const myBid = allBids.find(b => decrypt(b.projectId) === decryptedProjectId && decrypt(b.freelancerId) === freelancerId && b._id.toString() === bidId);
+
+    if (project && decrypt(project.status) === "selected" && myBid) {
       return res.status(400).json({
-        error: "Bid update is not allowed as the project is already accepted.",
+        error: "Bid update is not allowed as your bid has already been selected.",
       });
     }
 
-    // If the project status is "selected", check if this bid is the selected one
-    if (bid.projectId.status === "selected") {
-      const selectedBid = await Bid.findOne({ projectId: bid.projectId._id, _id: bidId });
-      if (selectedBid && selectedBid._id.toString() === bidId) {
-        return res.status(400).json({
-          error: "Bid update is not allowed as your bid has already been selected.",
-        });
-      }
-    }
-
-    // Update the bid
-    bid.amount = bidAmount;
+    // Update the bid - Modified: Encrypt amount
+    bid.amount = eccEncrypt(bidAmount.toString());
     await bid.save();
 
-    const project = await Project.findById(bid.projectId).populate("client", "email");
-    const freelancer = await User.findById(req.user.id).select("email");
+    const clientUser = await User.findById(decrypt(project.client)).select("email");
 
-    // Log the activity
+    // Log the activity - Modified: Encrypt userId and messages
     await Activity.create({
-      userId: freelancerId,
-      action: `You updated your bid to $${bidAmount} for project "${project.title}".`,
+      userId: eccEncrypt(freelancerId),
+      action: eccEncrypt(`You updated your bid to $${bidAmount} for project "${decrypt(project.title)}".`),
     });
 
     // Create a notification for the client
     await Notification.create({
-      user: project.client._id,
-      message: `Freelancer (${freelancer.email}) has updated their bid for project "${project.title}".`,
+      user: project.client, // Already encrypted
+      message: eccEncrypt(`A freelancer has updated their bid for project "${decrypt(project.title)}".`),
     });
 
     res.status(200).json({ message: "Bid updated successfully.", bid });
@@ -385,43 +439,45 @@ router.delete("/:bidId", verifyToken, async (req, res) => {
     const { bidId } = req.params;
     const freelancerId = req.user.id;
 
-    const bid = await Bid.findOne({ _id: bidId, freelancerId }).populate("projectId");
-
-    if (!bid) {
+    const bid = await Bid.findById(bidId);
+    if (!bid || decrypt(bid.freelancerId) !== freelancerId) {
       return res.status(404).json({ error: "Bid not found or you are not authorized to delete this bid." });
     }
 
+    const decryptedProjectId = decrypt(bid.projectId);
+    const project = await Project.findById(decryptedProjectId);
+
     // Check project status
-    if (bid.projectId.status === "accepted") {
+    if (project && decrypt(project.status) === "accepted") {
       return res.status(400).json({
         error: "Bid deletion is not allowed as the project is already accepted.",
       });
     }
 
-    const projectId = bid.projectId._id;
-
     // Delete the bid
     await bid.deleteOne();
 
     // Check if there are any remaining bids for the project
-    const remainingBids = await Bid.find({ projectId });
-    if (remainingBids.length === 0 && bid.projectId.status === "selected") {
+    const allBids = await Bid.find();
+    const remainingBids = allBids.filter(b => decrypt(b.projectId) === decryptedProjectId);
+    if (remainingBids.length === 0 && project && decrypt(project.status) === "selected") {
       // If no bids are left, update the project status to "pending"
-      await Project.findByIdAndUpdate(projectId, { status: "pending" });
+      project.status = eccEncrypt("pending");
+      await project.save();
     }
 
-    const project = await Project.findById(projectId).populate("client", "email");
-    const freelancer = await User.findById(freelancerId).select("email");
-    // Log the activity
+    const projectToLog = await Project.findById(decryptedProjectId);
+    
+    // Log the activity - Modified: Encrypt userId and messages
     await Activity.create({
-      userId: freelancerId,
-      action: `You deleted your bid for project "${project.title}".`,
+      userId: eccEncrypt(freelancerId),
+      action: eccEncrypt(`You deleted your bid for project "${decrypt(project.title)}".`),
     });
 
     // Create a notification for the client
     await Notification.create({
-      user: project.client._id,
-      message: `Freelancer (${freelancer.email}) has deleted their bid for project "${project.title}".`,
+      user: project.client, // Already encrypted
+      message: eccEncrypt(`A freelancer has deleted their bid for project "${decrypt(project.title)}".`),
     });
 
     res.status(200).json({ message: "Bid deleted successfully." });

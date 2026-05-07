@@ -2,13 +2,22 @@ const express = require("express");
 const router = express.Router();
 const Activity = require("../models/activityModel");
 const { verifyToken } = require("../middleware/authMiddleware");
+const { eccEncrypt, eccDecrypt, decrypt } = require("../utils/cryptoUtils");
 
 // Fetch activity logs for the authenticated user
 router.get("/", verifyToken, async (req, res) => {
   try {
-    const userId = req.user.id; // Assuming `req.user` contains the authenticated user's ID
-    const activities = await Activity.find({ userId }).sort({ timestamp: -1 }).limit(10); // Fetch the last 10 activities
-    res.status(200).json(activities);
+    const userId = req.user.id;
+    const allActivities = await Activity.find().sort({ timestamp: -1 });
+    const activities = allActivities.filter(activity => decrypt(activity.userId) === userId).slice(0, 10);
+    
+    // Modified: Decrypt activity actions before sending to the client
+    const decryptedActivities = activities.map(activity => ({
+      ...activity.toObject(),
+      action: eccDecrypt(activity.action),
+    }));
+
+    res.status(200).json(decryptedActivities);
   } catch (error) {
     console.error("Error fetching activity logs:", error);
     res.status(500).json({ error: "Failed to fetch activity logs." });
@@ -21,21 +30,26 @@ router.post("/", verifyToken, async (req, res) => {
     const { action } = req.body;
     const userId = req.user.id;
 
-    // Create a new activity
+    // Modified: Encrypt activity action and userId before storage
     const newActivity = await Activity.create({
-      userId,
-      action,
+      userId: eccEncrypt(userId),
+      action: eccEncrypt(action),
     });
 
     // Fetch all activities for the user and delete older ones beyond the 10th
-    const activities = await Activity.find({ userId }).sort({ timestamp: -1 });
+    const allActivitiesForUser = await Activity.find().sort({ timestamp: -1 });
+    const activities = allActivitiesForUser.filter(activity => decrypt(activity.userId) === userId);
     if (activities.length > 10) {
-      const activitiesToDelete = activities.slice(10); // Get activities beyond the 10th
+      const activitiesToDelete = activities.slice(10);
       const activityIdsToDelete = activitiesToDelete.map((activity) => activity._id);
-      await Activity.deleteMany({ _id: { $in: activityIdsToDelete } }); // Delete older activities
+      await Activity.deleteMany({ _id: { $in: activityIdsToDelete } });
     }
 
-    res.status(201).json(newActivity);
+    // Modified: Decrypt action for the response
+    res.status(201).json({
+      ...newActivity.toObject(),
+      action: eccDecrypt(newActivity.action),
+    });
   } catch (error) {
     console.error("Error creating activity:", error);
     res.status(500).json({ error: "Failed to create activity." });

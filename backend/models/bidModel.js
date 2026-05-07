@@ -2,17 +2,15 @@ const mongoose = require("mongoose");
 
 const bidSchema = new mongoose.Schema({
   projectId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Project",
+    type: String,
     required: true,
   },
   freelancerId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
+    type: String,
     required: true,
   },
   amount: {
-    type: Number,
+    type: String,
     required: true,
   },
   status: {

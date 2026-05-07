@@ -3,25 +3,20 @@ const mongoose = require("mongoose");
 const reviewSchema = new mongoose.Schema(
   {
     projectId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Project",
+      type: String,
       required: true,
     },
     reviewerId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      type: String,
       required: true,
     },
     receiverId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      type: String,
       required: true,
     },
     rating: {
-      type: Number,
+      type: String,
       required: true,
-      min: 1,
-      max: 5,
     },
     comment: {
       type: String,
@@ -29,14 +24,13 @@ const reviewSchema = new mongoose.Schema(
     },
     reviewerType: {
       type: String,
-      enum: ["client", "freelancer"],
       required: true,
     },
   },
   { timestamps: true }
 );
 
-// Prevent multiple reviews for the same project by the same reviewer
-reviewSchema.index({ projectId: 1, reviewerId: 1 }, { unique: true });
+// Modified: Unique index removed because encrypted IDs are non-deterministic
+// reviewSchema.index({ projectId: 1, reviewerId: 1 }, { unique: true });
 
 module.exports = mongoose.model("Review", reviewSchema);

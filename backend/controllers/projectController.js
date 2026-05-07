@@ -5,10 +5,12 @@ const Notification = require("../models/notificationModel");
 const { verifyToken } = require("../middleware/authMiddleware");
 const cron = require("node-cron");
 const DirectHire = require("../models/directHireModel");
-const Bid = require("../models/bidModel"); // Adjust the path if necessary
-const Activity = require("../models/activityModel"); // Import the Activity model
-const FreelancerInformation = require("../models/freelancerInformationModel"); // Import the FreelancerInformation model
+const Bid = require("../models/bidModel");
+const Activity = require("../models/activityModel");
+const FreelancerInformation = require("../models/freelancerInformationModel");
 const router = express.Router();
+// Modified: Use RSA for User and ECC for Project. Import unified decrypt.
+const { eccEncrypt, eccDecrypt, rsaEncrypt, rsaDecrypt, decrypt } = require('../utils/cryptoUtils');
 
 // Schedule a task to run every day at midnight
 cron.schedule("0 0 * * *", async () => {
@@ -19,13 +21,17 @@ cron.schedule("0 0 * * *", async () => {
     today.setHours(0, 0, 0, 0); // Set time to 00:00:00
 
     // Find projects with deadlines earlier than today
-    const expiredProjects = await Project.find({ deadline: { $lt: today } });
+    const allProjects = await Project.find();
+    const expiredProjects = allProjects.filter(project => {
+        const deadline = decrypt(project.deadline);
+        return deadline && new Date(deadline) < today;
+    });
 
     for (const project of expiredProjects) {
       // Notify the client
       await Notification.create({
-        user: project.client,
-        message: `The deadline for your project "${project.title}" has passed.`,
+        user: project.client, // Already encrypted in DB
+        message: eccEncrypt(`The deadline for your project "${decrypt(project.title)}" has passed.`),
       });
 
     }
@@ -50,22 +56,39 @@ router.post("/create", verifyToken, async (req, res) => {
 
   try {
     const project = new Project({
-      title,
-      description,
-      budget,
-      deadline,
-      client,
+      title: eccEncrypt(title),
+      description: eccEncrypt(description),
+      budget: eccEncrypt(budget.toString()),
+      deadline: eccEncrypt(deadline),
+      client: eccEncrypt(client), // Modified: Encrypt client ID with ECC
+      status: eccEncrypt("pending"),
+      completedpercentage: eccEncrypt("0"),
+      escrowStatus: eccEncrypt("Not Funded"),
+      approvalStatus: eccEncrypt("Pending"),
+      claimStatus: eccEncrypt("Pending"),
     });
 
     await project.save();
 
-    // Log the activity
+    // Modified: Encrypt activity log and userId
     await Activity.create({
-      userId: client,
-      action: `You created a project titled "${title}".`,
+      userId: eccEncrypt(client),
+      action: eccEncrypt(`You created a project titled "${title}".`),
     });
 
-    res.status(201).json(project);
+    // Modified: Decrypt all project fields for response using unified decrypt
+    res.status(201).json({
+      ...project.toObject(),
+      title: decrypt(project.title),
+      description: decrypt(project.description),
+      budget: decrypt(project.budget),
+      deadline: decrypt(project.deadline),
+      status: decrypt(project.status),
+      completedpercentage: decrypt(project.completedpercentage),
+      escrowStatus: decrypt(project.escrowStatus),
+      approvalStatus: decrypt(project.approvalStatus),
+      claimStatus: decrypt(project.claimStatus),
+    });
   } catch (error) {if (error.code === 11000) {
       return res.status(400).json({
         error: `A project with the title "${title}" already exists for this client.`,
@@ -82,10 +105,38 @@ router.get("/", async (req, res) => {
   try {
     // Fetch all projects and populate the client field to include the email
     const projects = await Project.find()
-      .populate("client", "email name") // Populate the client field with email and name
+      .populate("client", "email name")
       .exec();
 
-    res.status(200).json(projects);
+    // Modified: Decrypt all project fields and manually fetch client info
+    const decryptedProjects = await Promise.all(projects.map(async (p) => {
+      const decryptedClientId = decrypt(p.client);
+      const clientUser = await User.findById(decryptedClientId).select("name email");
+      
+      return {
+        ...p.toObject(),
+        title: decrypt(p.title || ""),
+        description: decrypt(p.description || ""),
+        budget: decrypt(p.budget || ""),
+        deadline: decrypt(p.deadline || ""),
+        acceptedmoney: decrypt(p.acceptedmoney || ""),
+        status: decrypt(p.status || "pending"),
+        acceptedFreelancer: decrypt(p.acceptedFreelancer || ""),
+        completedpercentage: Number(decrypt(p.completedpercentage || "0")),
+        escrowStatus: decrypt(p.escrowStatus || "Not Funded"),
+        completionUrl: decrypt(p.completionUrl || ""),
+        approvalStatus: decrypt(p.approvalStatus || "Pending"),
+        rejectionComment: decrypt(p.rejectionComment || ""),
+        claimStatus: decrypt(p.claimStatus || "Pending"),
+        client: clientUser ? {
+          ...clientUser.toObject(),
+          name: rsaDecrypt(clientUser.name),
+          email: rsaDecrypt(clientUser.email),
+        } : null,
+      };
+    }));
+
+    res.status(200).json(decryptedProjects);
   } catch (error) {
     console.error("Error fetching projects:", error);
     res.status(500).json({ message: "Error fetching projects", error });
@@ -96,7 +147,19 @@ router.get("/featured", async (req, res) => {
   try {
     // Fetch the latest 6 projects sorted by the MongoDB _id field
     const featuredProjects = await Project.find().sort({ _id: -1 }).limit(6);
-    res.status(200).json(featuredProjects);
+    
+    // Modified: Decrypt featured projects using unified decrypt
+    const decryptedFeatured = featuredProjects.map(p => ({
+      ...p.toObject(),
+      title: decrypt(p.title),
+      description: decrypt(p.description),
+      budget: decrypt(p.budget),
+      deadline: decrypt(p.deadline),
+      status: decrypt(p.status),
+      acceptedFreelancer: decrypt(p.acceptedFreelancer),
+    }));
+
+    res.status(200).json(decryptedFeatured);
   } catch (error) {
     console.error("Error fetching featured projects:", error);
     res.status(500).json({ message: "Error fetching featured projects", error });
@@ -114,11 +177,33 @@ router.get("/:id", verifyToken, async (req, res) => {
   try {
     const project = await Project.findById(id).populate("client", "name email");
 
-    if (!project) {
-      return res.status(404).json({ error: "Project not found." });
-    }
+    // Modified: Decrypt all project and manually fetch client info
+    const decryptedClientId = decrypt(project.client);
+    const clientUser = await User.findById(decryptedClientId).select("name email");
 
-    res.status(200).json(project);
+    const decryptedProject = {
+      ...project.toObject(),
+      title: decrypt(project.title),
+      description: decrypt(project.description),
+      budget: decrypt(project.budget),
+      deadline: decrypt(project.deadline),
+      acceptedmoney: decrypt(project.acceptedmoney),
+      status: decrypt(project.status),
+      acceptedFreelancer: decrypt(project.acceptedFreelancer),
+      completedpercentage: decrypt(project.completedpercentage),
+      escrowStatus: decrypt(project.escrowStatus),
+      completionUrl: decrypt(project.completionUrl),
+      approvalStatus: decrypt(project.approvalStatus),
+      rejectionComment: decrypt(project.rejectionComment),
+      claimStatus: decrypt(project.claimStatus),
+      client: clientUser ? {
+        ...clientUser.toObject(),
+        name: rsaDecrypt(clientUser.name),
+        email: rsaDecrypt(clientUser.email),
+      } : null,
+    };
+
+    res.status(200).json(decryptedProject);
   } catch (error) {
     console.error("Error fetching project details:", error);
     res.status(500).json({ error: "Server error" });
@@ -174,9 +259,26 @@ router.delete("/admin/:id", async (req, res) => {
 router.get("/client/projects", verifyToken, async (req, res) => {
   try {
     const clientId = req.user.id; 
-    const projects = await Project.find({ client: clientId });
+    const allProjects = await Project.find();
+    const projects = allProjects.filter(p => decrypt(p.client) === clientId);
 
-    res.status(200).json(projects);
+    // Modified: Decrypt projects for client dashboard
+    const decryptedProjects = projects.map(p => ({
+      ...p.toObject(),
+      title: decrypt(p.title || ""),
+      description: decrypt(p.description || ""),
+      budget: decrypt(p.budget || ""),
+      deadline: decrypt(p.deadline || ""),
+      acceptedmoney: decrypt(p.acceptedmoney || ""),
+      status: decrypt(p.status || "pending"),
+      completedpercentage: Number(decrypt(p.completedpercentage || "0")),
+      escrowStatus: decrypt(p.escrowStatus || "Not Funded"),
+      paymentIntentId: decrypt(p.paymentIntentId || ""),
+      approvalStatus: decrypt(p.approvalStatus || "Pending"),
+      completionUrl: decrypt(p.completionUrl || ""),
+    }));
+
+    res.status(200).json(decryptedProjects);
   } catch (error) {
     console.error("Error fetching client projects:", error);
     res.status(500).json({ message: "Error fetching projects", error });
@@ -224,17 +326,19 @@ router.put("/client/update", verifyToken, async (req, res) => {
     }
 
     
-    if (name && name !== user.name) {
-      user.name = name;
+    // Modified: Reverted to RSA for User name update
+    if (name && name !== rsaDecrypt(user.name)) {
+      user.name = rsaEncrypt(name);
     }
     
     await user.save();
+    // Modified: Use req.user.id and encrypt action with ECC
     await Activity.create({
-      userId: client,
-      action: `You have updated created your profile.`,
+      userId: req.user.id,
+      action: eccEncrypt("You updated your profile information."),
     });
 
-    res.json({ message: "Profile updated successfully", name: user.name });
+    res.json({ message: "Profile updated successfully", name: rsaDecrypt(user.name) });
   } catch (err) {
     console.error("Error in /client/update:", err);
     res.status(500).json({ error: "Server error" });
@@ -245,7 +349,7 @@ router.put("/client/update", verifyToken, async (req, res) => {
 // Update Project
 router.put("/client/update/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
-  const { budget, deadline } = req.body;
+  const { title, description, budget, deadline } = req.body;
 
   // Validate that the deadline is not in the past
   const today = new Date().toISOString().split("T")[0];
@@ -261,38 +365,51 @@ router.put("/client/update/:id", verifyToken, async (req, res) => {
     }
 
     // Ensure the client is authorized to update the project
-    if (project.client.toString() !== req.user.id) {
+    if (decrypt(project.client) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to update this project." });
     }
 
-    // Check if the project status is "accepted"
-    if (project.status === "accepted") {
+    // Check if the project status is "accepted" - Modified: Decrypt status for comparison
+    if (decrypt(project.status) === "accepted") {
       return res.status(400).json({
         error: "This project cannot be updated because its status is 'accepted'.",
       });
     }
 
-    // Check if a direct hire has been placed for the project
-    const directHireExists = await DirectHire.findOne({ projectId: id });
+    // Check if a direct hire has been placed for the project - Modified: Manual filter for encrypted projectId
+    const allDirectHires = await DirectHire.find();
+    const directHireExists = allDirectHires.find(dh => decrypt(dh.projectId) === id);
     if (directHireExists) {
       return res.status(400).json({
         error: "This project cannot be updated because a direct hire has been placed.",
       });
     }
 
-    // Update the project fields
-    if (budget) project.budget = budget;
-    if (deadline) project.deadline = deadline;
+    // Update the project fields - Modified: Encrypt title, description, budget, and deadline using ECC
+    if (title) project.title = eccEncrypt(title);
+    if (description) project.description = eccEncrypt(description);
+    if (budget) project.budget = eccEncrypt(budget.toString());
+    if (deadline) project.deadline = eccEncrypt(deadline);
 
     await project.save();
 
-    // Log the activity
+    // Log the activity - Modified: Decrypt title for log message, Encrypt userId
+    const decryptedTitle = decrypt(project.title);
     await Activity.create({
-      userId: req.user.id,
-      action: `You updated the project "${project.title}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You updated the project "${decryptedTitle}".`),
     });
 
-    res.status(200).json({ message: "Project updated successfully", project });
+    res.status(200).json({ 
+      message: "Project updated successfully", 
+      project: {
+        ...project.toObject(),
+        title: decrypt(project.title),
+        description: decrypt(project.description),
+        budget: decrypt(project.budget),
+        deadline: decrypt(project.deadline),
+      }
+    });
   } catch (error) {
     console.error("Error updating project:", error);
     res.status(500).json({ error: "Server error" });
@@ -316,19 +433,20 @@ router.delete("/client/delete/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Project not found" });
     }
 
-    // Ensure the client is authorized to delete the project
-    if (project.client.toString() !== req.user.id) {
+    // Ensure the client is authorized to delete the project - Modified: Decrypt client for comparison
+    if (decrypt(project.client) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to delete this project" });
     }
 
-    if (project.status !== "pending") {
+    // Modified: Decrypt status for comparison
+    if (decrypt(project.status) !== "pending") {
       return res.status(400).json({
         error: "This project cannot be deleted because its status is not 'pending'.",
       });
     }
 
-    // Check if the escrow is refunded
-    if (project.escrowStatus !== "Not Funded") {
+    // Check if the escrow is refunded - Modified: Decrypt escrowStatus for comparison
+    if (decrypt(project.escrowStatus) !== "Not Funded") {
       return res.status(400).json({
         error: "Refund your escrow money first to delete the project.",
       });
@@ -337,10 +455,11 @@ router.delete("/client/delete/:id", verifyToken, async (req, res) => {
     // Delete the project
     await Project.findByIdAndDelete(id);
 
-    // Log the activity
+    // Modified: Decrypt title for log and encrypt entire action and userId
+    const decryptedTitle = decrypt(project.title);
     await Activity.create({
-      userId: req.user.id,
-      action: `You deleted the project "${project.title}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You deleted the project "${decryptedTitle}".`),
     });
 
     res.status(200).json({ message: "Project deleted successfully." });
@@ -368,18 +487,19 @@ router.put("/status/:projectId", verifyToken, async (req, res) => {
     }
 
     // Ensure the client is authorized to update the project
-    if (project.client.toString() !== req.user.id) {
+    if (decrypt(project.client) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to update this project." });
     }
 
-    // Update the project status
-    project.status = status;
+    // Update the project status - Modified: Encrypt status with ECC
+    project.status = eccEncrypt(status);
     await project.save();
 
-    // Log the activity
+    // Modified: Decrypt title for log and encrypt entire action and userId
+    const decryptedTitle = decrypt(project.title);
     await Activity.create({
-      userId: req.user.id,
-      action: `You updated the status of the project "${project.title}" to "${status}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You updated the status of the project "${decryptedTitle}" to "${status}".`),
     });
 
     res.status(200).json({ message: "Project status updated successfully.", project });
@@ -402,7 +522,7 @@ router.put("/update-completion/:projectId", verifyToken, async (req, res) => {
     }
 
     // Ensure the freelancer updating the percentage is the accepted freelancer
-    if (project.acceptedFreelancer.toString() !== req.user.id) {
+    if (decrypt(project.acceptedFreelancer) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to update this project." });
     }
 
@@ -411,14 +531,15 @@ router.put("/update-completion/:projectId", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Completion percentage must be between 0 and 100." });
     }
 
-    // Update the completion percentage
-    project.completedpercentage = completedpercentage;
+    // Update the completion percentage - Modified: Encrypt with ECC
+    project.completedpercentage = eccEncrypt(completedpercentage.toString());
     await project.save();
 
-    // Log the activity
+    // Modified: Decrypt title for log and encrypt entire action and userId
+    const decryptedTitle = decrypt(project.title);
     await Activity.create({
-      userId: req.user.id,
-      action: `You updated the completion percentage of the project "${project.title}" to ${completedpercentage}%.`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You updated the completion percentage of the project "${decryptedTitle}" to ${completedpercentage}%.`),
     });
 
     res.status(200).json({ message: "Project completion percentage updated successfully.", project });
@@ -440,23 +561,57 @@ router.put("/submit-completion/:projectId", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Project not found." });
     }
 
-    if (project.acceptedFreelancer.toString() !== req.user.id) {
+    if (decrypt(project.acceptedFreelancer) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to submit this project." });
     }
 
-    project.completionUrl = completionUrl;
-    project.approvalStatus = "Pending";
+    project.completionUrl = eccEncrypt(completionUrl);
+    project.approvalStatus = eccEncrypt("Pending");
     await project.save();
 
     res.status(200).json({ message: "Project completion URL submitted successfully.", project });
-    // Add activity log
+    // Modified: Decrypt title for log and encrypt activity action and userId
+    const decryptedTitle = decrypt(project.title);
     await Activity.create({
-      userId: req.user.id,
-      action: `You submitted a completion URL for project "${project.title}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You submitted a completion URL for project "${decryptedTitle}".`),
     });
   } catch (error) {
     console.error("Error submitting project completion URL:", error);
     res.status(500).json({ error: "Failed to submit project completion URL." });
+  }
+});
+
+// Route to delete project completion URL
+router.delete("/delete-completion/:projectId", verifyToken, async (req, res) => {
+  const { projectId } = req.params;
+
+  try {
+    const project = await Project.findById(projectId);
+
+    if (!project) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+
+    if (decrypt(project.acceptedFreelancer) !== req.user.id) {
+      return res.status(403).json({ error: "You are not authorized to modify this project." });
+    }
+
+    project.completionUrl = eccEncrypt("");
+    // If deleted, we might want to reset approval status back to Pending if it wasn't already
+    project.approvalStatus = eccEncrypt("Pending");
+    await project.save();
+
+    res.status(200).json({ message: "Project completion URL deleted successfully.", project });
+    
+    const decryptedTitle = decrypt(project.title);
+    await Activity.create({
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You deleted the completion URL for project "${decryptedTitle}".`),
+    });
+  } catch (error) {
+    console.error("Error deleting project completion URL:", error);
+    res.status(500).json({ error: "Failed to delete project completion URL." });
   }
 });
 
@@ -471,30 +626,38 @@ router.put("/approve-completion/:projectId", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Project not found." });
     }
 
-    if (project.client.toString() !== req.user.id) {
+    if (decrypt(project.client) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to approve this project." });
     }
 
-    project.approvalStatus = "Approved";
+    project.approvalStatus = eccEncrypt("Approved");
     await project.save();
 
     // Update freelancer's completed projects count
-    const freelancerInfo = await FreelancerInformation.findOne({ userId: project.acceptedFreelancer });
-    if (freelancerInfo) {
-      freelancerInfo.projectsCompleted += 1;
-      await freelancerInfo.save();
+    const freelancerId = decrypt(project.acceptedFreelancer);
+    const allFreelancerInfo = await FreelancerInformation.find();
+    const targetedFreelancerInfo = allFreelancerInfo.find(fi => decrypt(fi.userId) === freelancerId);
+
+    if (targetedFreelancerInfo) {
+      // Modified: Reverted to RSA for incrementing projectsCompleted
+      const current = parseInt(rsaDecrypt(targetedFreelancerInfo.projectsCompleted ?? "")) || 0;
+      targetedFreelancerInfo.projectsCompleted = rsaEncrypt(String(current + 1));
+      await targetedFreelancerInfo.save();
     }
+
+    // Modified: Decrypt title for notification and log
+    const decryptedTitle = eccDecrypt(project.title);
 
     // Add notification for the freelancer
     await Notification.create({
-      user: project.acceptedFreelancer,
-      message: `Your work on project "${project.title}" has been approved! You can now claim payment.`,
+      user: project.acceptedFreelancer, // Already encrypted
+      message: eccEncrypt(`Your work on project "${decryptedTitle}" has been approved! You can now claim payment.`),
     });
 
     // Log activity for client
     await Activity.create({
-      userId: req.user.id,
-      action: `You approved the completion of project "${project.title}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You approved the work for project "${decryptedTitle}".`),
     });
 
     res.status(200).json({ message: "Project approved successfully.", project });
@@ -513,10 +676,10 @@ router.put("/reject-approval/:projectId", async (req, res) => {
     const project = await Project.findByIdAndUpdate(
       projectId,
       {
-        approvalStatus: "Rejected",
-        rejectionComment: comments,
-        completedpercentage: completedpercentage || 0,
-        completionUrl: null,
+        approvalStatus: eccEncrypt("Rejected"),
+        rejectionComment: eccEncrypt(comments || ""),
+        completedpercentage: eccEncrypt((completedpercentage || 0).toString()),
+        completionUrl: eccEncrypt(""),
       },
       { new: true }
     );
@@ -530,8 +693,8 @@ router.put("/reject-approval/:projectId", async (req, res) => {
     const client = project.client;
 
     await Activity.create({
-      userId: client._id,
-      action: `You have rejected the project approval of title: "${project.title}".`,
+      userId: project.client, // Already encrypted
+      action: eccEncrypt(`You have rejected the project approval of title: "${decrypt(project.title)}".`),
     });
     return res.status(200).json({ message: "Project approval rejected" });
   } catch (error) {
@@ -552,11 +715,12 @@ router.put("/escrow/fund/:projectId", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Project not found." });
     }
 
-    if (project.client.toString() !== req.user.id) {
+    if (decrypt(project.client) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to fund this project." });
     }
 
-    if (project.escrowStatus !== "Not Funded") {
+    // Modified: Decrypt escrowStatus for comparison
+    if (decrypt(project.escrowStatus) !== "Not Funded") {
       return res.status(400).json({ error: "Escrow has already been funded for this project." });
     }
 
@@ -566,16 +730,17 @@ router.put("/escrow/fund/:projectId", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Payment not completed." });
     }
 
-    // Update escrow status
-    project.escrowStatus = "Funded";
-    project.paymentIntentId = paymentIntentId;
+    // Update escrow status - Modified: Encrypt with ECC
+    project.escrowStatus = eccEncrypt("Funded");
+    project.status = eccEncrypt("selected");
+    project.paymentIntentId = eccEncrypt(paymentIntentId);
     await project.save();
 
     res.status(200).json({ message: "Escrow funded successfully.", project });
     // Add activity log
     await Activity.create({
-      userId: req.user.id,
-      action: `You funded the escrow for project "${project.title}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You funded the escrow for project "${decrypt(project.title)}".`),
     });
   } catch (error) {
     console.error("Error funding escrow:", error);
@@ -594,25 +759,27 @@ router.post("/escrow/release/:projectId", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Project not found." });
     }
 
-    if (project.client.toString() !== req.user.id) {
+    if (decrypt(project.client) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to release escrow for this project." });
     }
 
-    if (project.escrowStatus === "Not Funded") {
+    // Modified: Decrypt escrowStatus for comparison
+    if (decrypt(project.escrowStatus) === "Not Funded") {
       return res.status(400).json({ error: "Escrow has not been funded or has already been released." });
     }
 
     // Simulate fund transfer to the freelancer
     // Here, you would integrate with a payment gateway to transfer the funds.
 
-    project.escrowStatus = "released";
+    project.escrowStatus = eccEncrypt("released");
     await project.save();
 
     res.status(200).json({ message: "Escrow released successfully.", project });
-    // Add activity log
+    // Modified: Decrypt title for log and encrypt entire action
+    const decryptedTitle = decrypt(project.title);
     await Activity.create({
-      userId: req.user.id,
-      action: `You released the escrow for project "${project.title}".`,
+      userId: project.client, // Already encrypted
+      action: eccEncrypt(`You released the escrow for project "${decryptedTitle}".`),
     });
   } catch (error) {
     console.error("Error releasing escrow:", error);
@@ -631,22 +798,23 @@ router.post("/escrow/refund/:projectId", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "Project not found." });
     }
 
-    if (project.client.toString() !== req.user.id) {
+    if (decrypt(project.client) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to refund escrow for this project." });
     }
 
-    if (project.escrowStatus !== "Funded") {
+    // Modified: Decrypt escrowStatus for comparison
+    if (decrypt(project.escrowStatus) !== "Funded") {
       return res.status(400).json({ error: "Escrow has not been funded or has already been refunded." });
     }
 
-    // Simulate refund to the client
-    project.escrowStatus = "Refunded";
+    // Simulate refund to the client - Modified: Encrypt with ECC
+    project.escrowStatus = eccEncrypt("Refunded");
     await project.save();
     res.status(200).json({ message: "Escrow refunded successfully.", project });
     // Add activity log
     await Activity.create({
-      userId: req.user.id,
-      action: `You refunded the escrow for project "${project.title}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You refunded the escrow for project "${decrypt(project.title)}".`),
     });
   } catch (error) {
     console.error("Error refunding escrow:", error);

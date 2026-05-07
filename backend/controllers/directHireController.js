@@ -6,6 +6,8 @@ const User = require("../models/userModel");
 const { verifyToken } = require("../middleware/authMiddleware");
 const Activity = require("../models/activityModel"); // Import the Activity model
 const Bid = require("../models/bidModel"); // Import the Bid model
+// Modified: Use RSA for User/FreelancerInformation and ECC for others
+const { eccEncrypt, eccDecrypt, rsaDecrypt, decrypt } = require("../utils/cryptoUtils");
 
 const router = express.Router();
 
@@ -19,18 +21,23 @@ router.post("/", verifyToken, async (req, res) => {
     if (!project) {
       return res.status(404).json({ error: "Project not found." });
     }
-    if (project.escrowStatus === "Not Funded") {
+    if (decrypt(project.escrowStatus) === "Not Funded") {
       return res.status(400).json({ error: "Escrow must be funded before creating a direct hire." });
     }
-    // Check project status
-    if (project.status === "accepted") {
+    // Check project status - Modified: Decrypt status for comparison
+    if (decrypt(project.status) === "accepted") {
       return res.status(400).json({
         error: "Direct hire is not allowed as the project is already accepted.",
       });
     }
 
     // Check if a direct hire already exists
-    const existingDirectHire = await DirectHire.findOne({ freelancerId, clientId: req.user.id, projectId });
+    const allDirectHires = await DirectHire.find();
+    const existingDirectHire = allDirectHires.find(dh => 
+      decrypt(dh.projectId) === projectId && 
+      decrypt(dh.freelancerId) === freelancerId && 
+      decrypt(dh.clientId) === req.user.id
+    );
     if (existingDirectHire) {
       return res.status(400).json({
         error: "A direct hire already exists for this freelancer and project.",
@@ -38,26 +45,27 @@ router.post("/", verifyToken, async (req, res) => {
     }
 
     const directHire = new DirectHire({
-      freelancerId,
-      clientId: req.user.id,
-      projectId,
+      freelancerId: eccEncrypt(freelancerId),
+      clientId: eccEncrypt(req.user.id),
+      projectId: eccEncrypt(projectId),
     });
 
     await directHire.save();
 
     const freelancer = await User.findById(freelancerId).select("email");
+    const decryptedEmail = rsaDecrypt(freelancer.email);
 
     // Log the activity
+    const decryptedTitle = eccDecrypt(project.title);
     await Activity.create({
-      userId: req.user.id,
-      action: `You have offered a direct hire to freelancer (${freelancer.email}) for the project "${project.title}".`,
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt(`You have offered a direct hire to freelancer (${decryptedEmail}) for the project "${decryptedTitle}".`),
     });
 
     // Notify the freelancer
     await Notification.create({
-      user: freelancerId,
-      projectId: projectId,
-      message: `You have been offered to be hired for the project "${project.title}".`,
+      user: eccEncrypt(freelancerId),
+      message: eccEncrypt(`You have been offered to be hired for the project "${decryptedTitle}".`),
     });
 
     res.status(200).json({ message: "Freelancer has been offered to hire successfully.", directHire });
@@ -70,11 +78,31 @@ router.post("/", verifyToken, async (req, res) => {
 // Get Direct Hires for a Client
 router.get("/client", verifyToken, async (req, res) => {
   try {
-    const directHires = await DirectHire.find({ clientId: req.user.id })
-      .populate("freelancerId", "name email")
-      .populate("projectId", "title description");
+    const allDirectHires = await DirectHire.find();
+    
+    const directHires = allDirectHires.filter(dh => decrypt(dh.clientId) === req.user.id);
+    
+    // Fetch info manually since population is broken for encrypted IDs
+    const decryptedDirectHires = await Promise.all(directHires.map(async (dh) => {
+      const freelancer = await User.findById(decrypt(dh.freelancerId)).select("name email");
+      const project = await Project.findById(decrypt(dh.projectId)).select("title description");
+      
+      return {
+        ...dh.toObject(),
+        freelancerId: freelancer ? {
+          ...freelancer.toObject(),
+          name: rsaDecrypt(freelancer.name),
+          email: rsaDecrypt(freelancer.email),
+        } : null,
+        projectId: project ? {
+          ...project.toObject(),
+          title: eccDecrypt(project.title),
+          description: eccDecrypt(project.description),
+        } : null,
+      };
+    }));
 
-    res.status(200).json(directHires);
+    res.status(200).json(decryptedDirectHires);
   } catch (error) {
     console.error("Error fetching direct hires for client:", error);
     res.status(500).json({ error: "Server error" });
@@ -84,17 +112,39 @@ router.get("/client", verifyToken, async (req, res) => {
 // Get Direct Hires for a Freelancer (Pending and Selected)
 router.get("/freelancer", verifyToken, async (req, res) => {
   try {
-    const directHires = await DirectHire.find({ freelancerId: req.user.id })
-      .populate({
-        path: "projectId",
-        match: { status: { $in: ["pending", "selected"] } }, // Match projects with status "pending" or "selected"
-        select: "title description budget deadline client",
-      })
-      .populate("clientId", "name email");
+    const allDirectHires = await DirectHire.find();
+    
+    const directHires = allDirectHires.filter(dh => decrypt(dh.freelancerId) === req.user.id);
 
-    const filteredDirectHires = directHires.filter((directHire) => directHire.projectId !== null);
+    // Modified: Decrypt mixed data (User: RSA, Project: ECC)
+    const decryptedDirectHires = await Promise.all(directHires.map(async (dh) => {
+      const decryptedProjectId = decrypt(dh.projectId);
+      const project = await Project.findById(decryptedProjectId);
+      
+      // Filter by status manually
+      if (!project || !["pending", "selected"].includes(decrypt(project.status))) {
+        return null;
+      }
 
-    res.status(200).json(filteredDirectHires);
+      const client = await User.findById(decrypt(dh.clientId)).select("name email");
+      return {
+        ...dh.toObject(),
+        clientId: client ? {
+          ...client.toObject(),
+          name: rsaDecrypt(client.name),
+          email: rsaDecrypt(client.email),
+        } : null,
+        projectId: {
+          ...project.toObject(),
+          title: eccDecrypt(project.title),
+          description: eccDecrypt(project.description),
+          budget: eccDecrypt(project.budget),
+          deadline: eccDecrypt(project.deadline),
+        },
+      };
+    }));
+
+    res.status(200).json(decryptedDirectHires.filter(dh => dh !== null));
   } catch (error) {
     console.error("Error fetching direct hires for freelancer:", error);
     res.status(500).json({ error: "Server error" });
@@ -106,17 +156,27 @@ router.get("/details/:projectId", verifyToken, async (req, res) => {
   const { projectId } = req.params;
 
   try {
-    const directHire = await DirectHire.findOne({ projectId, freelancerId: req.user.id })
-      .populate("clientId", "name email")
-      .populate("projectId", "title description budget deadline");
+    const allDirectHires = await DirectHire.find();
+    const directHire = allDirectHires.find(dh => 
+      decrypt(dh.projectId) === projectId && decrypt(dh.freelancerId) === req.user.id
+    );
 
     if (!directHire) {
       return res.status(404).json({ error: "Direct hire record not found." });
     }
 
+    const project = await Project.findById(projectId);
+    const client = await User.findById(decrypt(directHire.clientId)).select("name email");
+
     res.status(200).json({
-      project: directHire.projectId,
-      client: directHire.clientId,
+      project: project ? {
+        ...project.toObject(),
+        title: eccDecrypt(project.title),
+        description: eccDecrypt(project.description),
+        budget: eccDecrypt(project.budget),
+        deadline: eccDecrypt(project.deadline),
+      } : null,
+      client: client,
     });
   } catch (error) {
     console.error("Error fetching direct hire details:", error);
@@ -129,43 +189,55 @@ router.put("/accept/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const directHire = await DirectHire.findById(id).populate("projectId freelancerId");
+    const directHire = await DirectHire.findById(id);
 
     if (!directHire) {
       return res.status(404).json({ error: "Direct hire record not found." });
     }
 
-    const projectId = directHire.projectId._id;
+    const decryptedProjectId = decrypt(directHire.projectId);
+    const project = await Project.findById(decryptedProjectId);
+
+    if (!project) {
+      return res.status(404).json({ error: "Project not found." });
+    }
 
     // Update the project status to "accepted" and store the accepted freelancer and budget
-    await Project.findByIdAndUpdate(projectId, {
-      status: "accepted",
-      acceptedFreelancer: directHire.freelancerId._id,
-      acceptedmoney: directHire.projectId.budget,
+    await Project.findByIdAndUpdate(decryptedProjectId, {
+      status: eccEncrypt("accepted"),
+      acceptedFreelancer: directHire.freelancerId, // Already encrypted
+      acceptedmoney: project.budget, // Already encrypted
     });
 
     // Delete all other direct hires for the project
-    await DirectHire.deleteMany({ projectId });
+    const allDirectHires = await DirectHire.find();
+    const otherDirectHires = allDirectHires.filter(dh => decrypt(dh.projectId) === decryptedProjectId);
+    await Promise.all(otherDirectHires.map(dh => dh.deleteOne()));
 
     // Delete all bids for the project
-    await Bid.deleteMany({ projectId });
+    const allBids = await Bid.find();
+    const otherBids = allBids.filter(b => decrypt(b.projectId) === decryptedProjectId);
+    await Promise.all(otherBids.map(b => b.deleteOne()));
+
+    const freelancerId = decrypt(directHire.freelancerId);
+    const freelancer = await User.findById(freelancerId);
 
     // Log the activity for the freelancer
     await Activity.create({
-      userId: directHire.freelancerId._id,
-      action: `You accepted the direct hire for project "${directHire.projectId.title}".`,
+      userId: directHire.freelancerId, // Already encrypted
+      action: eccEncrypt(`You accepted the direct hire for project "${decrypt(project.title)}".`),
     });
 
     // Log the activity for the client
     await Activity.create({
-      userId: directHire.clientId._id,
-      action: `Freelancer (${directHire.freelancerId.email}) accepted your direct hire for project "${directHire.projectId.title}".`,
+      userId: directHire.clientId, // Already encrypted
+      action: eccEncrypt(`Freelancer (${rsaDecrypt(freelancer.email)}) accepted your direct hire for project "${decrypt(project.title)}".`),
     });
 
     // Notify the client
     await Notification.create({
-      user: directHire.clientId._id,
-      message: `Freelancer (${directHire.freelancerId.email}) has accepted your project "${directHire.projectId.title}".`,
+      user: directHire.clientId, // Already encrypted
+      message: eccEncrypt(`Freelancer (${rsaDecrypt(freelancer.email)}) has accepted your project "${decrypt(project.title)}".`),
     });
 
     res.status(200).json({ message: "Direct hire accepted successfully." });
@@ -180,34 +252,41 @@ router.delete("/reject/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const directHire = await DirectHire.findById(id).populate("projectId").populate("clientId");
+    const directHire = await DirectHire.findById(id);
 
     if (!directHire) {
       return res.status(404).json({ error: "Direct hire record not found." });
     }
 
-    if (directHire.freelancerId.toString() !== req.user.id) {
+    if (decrypt(directHire.freelancerId) !== req.user.id) {
       return res.status(403).json({ error: "You are not authorized to reject this project." });
+    }
+
+    const decryptedProjectId = decrypt(directHire.projectId);
+    const project = await Project.findById(decryptedProjectId);
+
+    if (!project) {
+      return res.status(404).json({ error: "Project not found." });
     }
 
     const freelancer = await User.findById(req.user.id).select("email");
 
     // Log the activity for the freelancer
     await Activity.create({
-      userId: req.user.id,
-      action: `You rejected the direct hire for project "${directHire.projectId.title}".`,
+      userId: directHire.freelancerId, // Already encrypted
+      action: eccEncrypt(`You rejected the direct hire for project "${decrypt(project.title)}".`),
     });
 
     // Log the activity for the client
     await Activity.create({
-      userId: directHire.clientId._id,
-      action: `Freelancer (${freelancer.email}) rejected your direct hire for project "${directHire.projectId.title}".`,
+      userId: directHire.clientId, // Already encrypted
+      action: eccEncrypt(`Freelancer (${rsaDecrypt(freelancer.email)}) rejected your direct hire for project "${decrypt(project.title)}".`),
     });
 
     // Notify the client
     await Notification.create({
-      user: directHire.clientId._id,
-      message: `Freelancer (${freelancer.email}) has rejected your hire offer for the project "${directHire.projectId.title}".`,
+      user: directHire.clientId, // Already encrypted
+      message: eccEncrypt(`Freelancer (${rsaDecrypt(freelancer.email)}) has rejected your hire offer for the project "${decrypt(project.title)}".`),
     });
 
     // Delete the direct hire record

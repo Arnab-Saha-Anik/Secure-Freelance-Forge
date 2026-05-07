@@ -3,27 +3,22 @@ const mongoose = require("mongoose");
 const projectSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String, required: true },
-  budget: { type: Number, required: true },
-  deadline: { type: Date, required: true },
-  client: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  status: { type: String, enum: ["pending", "selected", "accepted", "done"], default: "pending" }, 
-  acceptedFreelancer: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Added field to store accepted freelancer
-  acceptedmoney: { type: Number }, // Added field to store accepted money
-  completedpercentage: { type: Number, default: 0 }, // Added field to store completed percentage
-  amount: { type: Number }, // Remove `required: true`
-  escrowStatus: { 
-    type: String, 
-    enum: ["Not Funded", "Funded", "Released", "Refunded"], // Ensure correct casing
-    default: "Not Funded" 
-  },
+  budget: { type: String, required: true },
+  deadline: { type: String, required: true },
+  client: { type: String, required: true },
+  status: { type: String, default: "pending" }, 
+  acceptedFreelancer: { type: String }, 
+  acceptedmoney: { type: String }, 
+  completedpercentage: { type: String, default: "0" }, 
+  amount: { type: String }, 
+  escrowStatus: { type: String, default: "Not Funded" },
   paymentIntentId: { type: String },
-  completionUrl: { type: String, default: "" }, // URL of the completed project
-  approvalStatus: { type: String, enum: ["Pending", "Approved", "Rejected"], default: "Pending" }, // Approval status
+  completionUrl: { type: String, default: "" }, 
+  approvalStatus: { type: String, default: "Pending" }, 
   rejectionComment: { type: String, default: null },
-  claimStatus: { type: String, enum: ["Pending", "Claimed"], default: "Pending" }, // Claim status
-  
+  claimStatus: { type: String, default: "Pending" }, 
 }, { timestamps: true });
 
-projectSchema.index({ client: 1, title: 1 }, { unique: true });
+projectSchema.index({ client: 1, title: 1 }, { unique: false });
 
 module.exports = mongoose.model("Project", projectSchema);

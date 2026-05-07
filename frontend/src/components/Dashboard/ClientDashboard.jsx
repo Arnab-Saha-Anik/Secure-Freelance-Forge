@@ -32,11 +32,7 @@ const ClientDashboard = () => {
     email: "",
     currentPassword: "",
   });
-  const [editProject, setEditProject] = useState({
-    id: null,
-    budget: "",
-    deadline: "",
-  });
+  const [editProject, setEditProject] = useState({ id: null, title: "", description: "", budget: "", deadline: "" });
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showDirectHireModal, setShowDirectHireModal] = useState(false);
@@ -97,7 +93,6 @@ const ClientDashboard = () => {
       navigate("/login");
     }
   }, [loggedInClientId, token, navigate]);
-
   useEffect(() => {
     if (!token) {
       navigate("/login");
@@ -188,6 +183,45 @@ const ClientDashboard = () => {
       console.error("Error fetching projects for direct hire:", error);
     }
   }, [token]);
+
+  useEffect(() => {
+    if (!token) {
+      navigate("/login");
+      return;
+    }
+
+    // Check for Stripe session ID in URL
+    const query = new URLSearchParams(window.location.search);
+    const sessionId = query.get("session_id");
+
+    if (sessionId) {
+      const verifyPayment = async () => {
+        try {
+          const response = await fetch(`http://localhost:5000/payments/verify-session/${sessionId}`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const data = await response.json();
+            if (response.ok) {
+              alert(data.message || "Operation verified successfully!");
+              // Clean up the URL
+              window.history.replaceState({}, document.title, window.location.pathname);
+              fetchProjects();
+              setShowProjects(true);
+            } else {
+            console.error("Payment verification failed:", data.error);
+          }
+        } catch (error) {
+          console.error("Error verifying payment:", error);
+        }
+      };
+      verifyPayment();
+    }
+
+    const interval = setInterval(checkUserExists, 1000);
+    return () => clearInterval(interval);
+  }, [checkUserExists, token, navigate, fetchProjects]);
 
   const fetchFreelancers = useCallback(async () => {
     setLoadingFreelancers(true);
@@ -508,6 +542,19 @@ const ClientDashboard = () => {
   };
 
   const handleDeleteProject = async (projectId) => {
+    // Find the project in state to check its escrow status
+    const project = projects.find(p => p._id === projectId);
+    
+    if (project && project.escrowStatus === "Funded") {
+      const wantToRefund = window.confirm(
+        "This project has funded escrow. You must refund the escrow before deleting. Would you like to initiate the refund now?"
+      );
+      if (wantToRefund) {
+        handleRefundEscrow(projectId);
+      }
+      return;
+    }
+
     const confirmDelete = window.confirm(
       "Are you sure you want to delete this project? This action cannot be undone."
     );
@@ -874,9 +921,11 @@ const ClientDashboard = () => {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
         body: JSON.stringify({
+          title: updatedProject.title,
+          description: updatedProject.description,
           budget: updatedProject.budget,
           deadline: updatedProject.deadline,
         }),
@@ -1056,42 +1105,54 @@ const ClientDashboard = () => {
               }}
             >
               <form onSubmit={handleAccountUpdate}>
-                <input
-                  type="text"
-                  name="name"
-                  placeholder="Name"
-                  value={accountInfo.name}
-                  onChange={handleAccountInfoChange}
-                  style={{padding: "10px", marginBottom: "10px",width: "100%",boxSizing: "border-box",
-                  }}
-                />
-                <input
-                  type="password"
-                  name="currentPassword"
-                  placeholder="Current Password"
-                  value={accountInfo.currentPassword}
-                  onChange={handleAccountInfoChange}
-                  style={{padding: "10px",marginBottom: "10px",width: "100%", boxSizing: "border-box",
-                  }}
-                />
-                <input
-                  type="password"
-                  name="newPassword"
-                  placeholder="New Password"
-                  value={accountInfo.newPassword}
-                  onChange={handleAccountInfoChange}
-                  style={{ padding: "10px", marginBottom: "10px", width: "100%", boxSizing: "border-box",
-                  }}
-                />
-                <input
-                  type="password"
-                  name="confirmNewPassword"
-                  placeholder="Confirm New Password"
-                  value={accountInfo.confirmNewPassword}
-                  onChange={handleAccountInfoChange}
-                  style={{padding: "10px",marginBottom: "10px", width: "100%",boxSizing: "border-box",
-                  }}
-                />
+                <div style={{ marginBottom: "10px" }}>
+                  <label style={{ display: "block", marginBottom: "5px", textAlign: "left", color: "#333" }}>Name:</label>
+                  <input
+                    type="text"
+                    name="name"
+                    placeholder="Name"
+                    value={accountInfo.name}
+                    onChange={handleAccountInfoChange}
+                    style={{padding: "10px", width: "100%",boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div style={{ marginBottom: "10px" }}>
+                  <label style={{ display: "block", marginBottom: "5px", textAlign: "left", color: "#333" }}>Current Password:</label>
+                  <input
+                    type="password"
+                    name="currentPassword"
+                    placeholder="Current Password"
+                    value={accountInfo.currentPassword}
+                    onChange={handleAccountInfoChange}
+                    style={{padding: "10px",width: "100%", boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div style={{ marginBottom: "10px" }}>
+                  <label style={{ display: "block", marginBottom: "5px", textAlign: "left", color: "#333" }}>New Password:</label>
+                  <input
+                    type="password"
+                    name="newPassword"
+                    placeholder="New Password"
+                    value={accountInfo.newPassword}
+                    onChange={handleAccountInfoChange}
+                    style={{ padding: "10px", width: "100%", boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div style={{ marginBottom: "10px" }}>
+                  <label style={{ display: "block", marginBottom: "5px", textAlign: "left", color: "#333" }}>Confirm New Password:</label>
+                  <input
+                    type="password"
+                    name="confirmNewPassword"
+                    placeholder="Confirm New Password"
+                    value={accountInfo.confirmNewPassword}
+                    onChange={handleAccountInfoChange}
+                    style={{padding: "10px", width: "100%",boxSizing: "border-box",
+                    }}
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={isUpdateDisabled}
@@ -1186,39 +1247,50 @@ const ClientDashboard = () => {
           {showPostProject ? "Hide Post Project" : "Post a Project"}
         </button>
         {showPostProject && (
-          <form onSubmit={handleProjectSubmit} style={{ marginBottom: "20px" }}>
-            <input
-              type="text"
-              placeholder="Project Title"
-              value={newProject.title}
-              onChange={(e) => setNewProject({ ...newProject, title: e.target.value })}
-              required
-              style={{ padding: "10px", marginRight: "10px" }}
-            />
-            <input
-              type="text"
-              placeholder="Project Description"
-              value={newProject.description}
-              onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-              required
-              style={{ padding: "10px", marginRight: "10px" }}
-            />
-            <input
-              type="number"
-              placeholder="Budget"
-              value={newProject.budget}
-              onChange={(e) => setNewProject({ ...newProject, budget: e.target.value })}
-              required
-              style={{ padding: "10px", marginRight: "10px" }}
-            />
-            <input
-              type="date"
-              placeholder="Deadline"
-              value={newProject.deadline}
-              onChange={(e) => setNewProject({ ...newProject, deadline: e.target.value })}
-              required
-              style={{ padding: "10px", marginRight: "10px" }}
-            />
+          <form onSubmit={handleProjectSubmit} style={{ marginBottom: "20px", textAlign: "left", maxWidth: "600px", margin: "0 auto 20px auto", backgroundColor: "#f9f9f9", padding: "20px", borderRadius: "10px", color: "#000" }}>
+            <div style={{ marginBottom: "10px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Project Title:</label>
+              <input
+                type="text"
+                placeholder="Project Title"
+                value={newProject.title}
+                onChange={(e) => setNewProject({ ...newProject, title: e.target.value })}
+                required
+                style={{ padding: "10px", width: "100%", boxSizing: "border-box", borderRadius: "5px", border: "1px solid #ddd" }}
+              />
+            </div>
+            <div style={{ marginBottom: "10px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Project Description:</label>
+              <textarea
+                placeholder="Project Description"
+                value={newProject.description}
+                onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
+                required
+                style={{ padding: "10px", width: "100%", boxSizing: "border-box", borderRadius: "5px", border: "1px solid #ddd", minHeight: "100px" }}
+              />
+            </div>
+            <div style={{ marginBottom: "10px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Budget ($):</label>
+              <input
+                type="number"
+                placeholder="Budget"
+                value={newProject.budget}
+                onChange={(e) => setNewProject({ ...newProject, budget: e.target.value })}
+                required
+                style={{ padding: "10px", width: "100%", boxSizing: "border-box", borderRadius: "5px", border: "1px solid #ddd" }}
+              />
+            </div>
+            <div style={{ marginBottom: "10px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Deadline:</label>
+              <input
+                type="date"
+                placeholder="Deadline"
+                value={newProject.deadline}
+                onChange={(e) => setNewProject({ ...newProject, deadline: e.target.value })}
+                required
+                style={{ padding: "10px", width: "100%", boxSizing: "border-box", borderRadius: "5px", border: "1px solid #ddd" }}
+              />
+            </div>
             <button
               type="submit"
               style={{padding: "10px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",
@@ -1493,6 +1565,8 @@ const ClientDashboard = () => {
                         onClick={() =>
                           setEditProject({
                             id: project._id,
+                            title: project.title,
+                            description: project.description,
                             budget: project.budget,
                             deadline: project.deadline.split("T")[0],
                           })
@@ -1565,7 +1639,7 @@ const ClientDashboard = () => {
 
       {editProject.id && (
         <div
-          style={{position: "fixed",top: "50%",left: "50%",transform: "translate(-50%, -50%)",backgroundColor: "#FFFFFF",padding: "20px",borderRadius: "10px",boxShadow: "0 4px 8px rgba(0, 0, 0, 0.2)",zIndex: 1000,width: "400px",
+          style={{position: "fixed",top: "50%",left: "50%",transform: "translate(-50%, -50%)",backgroundColor: "#FFFFFF",padding: "20px",borderRadius: "10px",boxShadow: "0 4px 15px rgba(0, 0, 0, 0.3)",zIndex: 1000,width: "500px", color: "#000"
           }}
         >
           <h3 style={{ marginBottom: "20px", textAlign: "center" }}>Edit Project</h3>
@@ -1574,34 +1648,61 @@ const ClientDashboard = () => {
               e.preventDefault();
               handleEditProjectSubmit(editProject);
             }}
+            style={{ textAlign: "left" }}
           >
-            <div style={{ marginBottom: "10px" }}>
-              <label style={{ display: "block", marginBottom: "5px" }}>Budget:</label>
+            <div style={{ marginBottom: "15px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Project Title:</label>
+              <input
+                type="text"
+                name="title"
+                value={editProject.title}
+                onChange={(e) =>
+                  setEditProject((prev) => ({ ...prev, title: e.target.value }))
+                }
+                placeholder="Project Name"
+                style={{ width: "100%", padding: "10px", borderRadius: "5px", border: "1px solid #ddd", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ marginBottom: "15px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Project Description:</label>
+              <textarea
+                name="description"
+                value={editProject.description}
+                onChange={(e) =>
+                  setEditProject((prev) => ({ ...prev, description: e.target.value }))
+                }
+                placeholder="Description"
+                style={{ width: "100%", padding: "10px", borderRadius: "5px", border: "1px solid #ddd", minHeight: "100px", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ marginBottom: "15px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Budget ($):</label>
               <input
                 type="number"
+                name="budget"
                 value={editProject.budget}
                 onChange={(e) =>
                   setEditProject((prev) => ({ ...prev, budget: e.target.value }))
                 }
                 placeholder="Budget"
-                style={{ width: "100%", padding: "10px", borderRadius: "5px", border: "1px solid #ddd",
-                }}
+                style={{ width: "100%", padding: "10px", borderRadius: "5px", border: "1px solid #ddd", boxSizing: "border-box" }}
               />
             </div>
-            <div style={{ marginBottom: "10px" }}>
-              <label style={{ display: "block", marginBottom: "5px" }}>Deadline:</label>
+            <div style={{ marginBottom: "15px" }}>
+              <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold" }}>Deadline:</label>
               <input
                 type="date"
+                name="deadline"
                 value={editProject.deadline}
                 onChange={(e) =>
                   setEditProject((prev) => ({ ...prev, deadline: e.target.value }))
                 }
                 placeholder="Deadline"
-                style={{width: "100%",padding: "10px",borderRadius: "5px",border: "1px solid #ddd",
+                style={{width: "100%",padding: "10px",borderRadius: "5px",border: "1px solid #ddd", boxSizing: "border-box"
                 }}
               />
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "20px" }}>
               <button
                 type="submit"
                 style={{padding: "10px 20px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",
@@ -1611,7 +1712,7 @@ const ClientDashboard = () => {
               </button>
               <button
                 type="button"
-                onClick={() => setEditProject({ id: null, budget: "", deadline: "" })}
+                onClick={() => setEditProject({ id: null, title: "", description: "", budget: "", deadline: "" })}
                 style={{ padding: "10px 20px", backgroundColor: "#DC3545", color: "#FFFFFF", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold",
                 }}
               >

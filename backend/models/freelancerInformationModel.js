@@ -2,8 +2,7 @@ const mongoose = require("mongoose");
 
 const freelancerInformationSchema = new mongoose.Schema({
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User", 
+    type: String, 
     required: true,
   },
   skills: {
@@ -19,17 +18,17 @@ const freelancerInformationSchema = new mongoose.Schema({
     type: String, 
     required: true,
   },
+  // Modified: No default — always set explicitly via rsaEncrypt("0") in the controller
   earnings: {
-    type: Number, 
-    default: 0,
+    type: String,
   },
+  // Modified: No default — always set explicitly via rsaEncrypt("0") in the controller
   reviews: {
-    type: Number, 
-    default: 0,
+    type: String,
   },
+  // Modified: No default — always set explicitly via rsaEncrypt("0") in the controller
   projectsCompleted: {
-    type: Number, 
-    default: 0,
+    type: String,
   },
 });
 

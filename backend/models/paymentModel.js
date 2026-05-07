@@ -2,10 +2,10 @@ const mongoose = require("mongoose");
 
 const paymentSchema = new mongoose.Schema(
   {
-    project: { type: mongoose.Schema.Types.ObjectId, ref: "Project", required: true },
-    client: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    freelancer: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    amount: { type: Number, required: true },
+    project: { type: String, required: true },
+    client: { type: String, required: true },
+    freelancer: { type: String },
+    amount: { type: String, required: true },
     status: { type: String, enum: ["Pending", "Succeeded", "Freelancer Paid", "Failed"], default: "Pending" },
     paymentIntentId: { type: String, required: true },
   },

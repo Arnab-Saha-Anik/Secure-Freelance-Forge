@@ -9,8 +9,8 @@ const Activity = require('../models/activityModel');
 const Notification = require('../models/notificationModel');
 const Project = require('../models/projectModel'); 
 const nodemailer = require("nodemailer"); 
-// Modified: Import the RSA utility functions
-const { rsaEncrypt, rsaDecrypt } = require('../utils/cryptoUtils');
+// Modified: Use RSA for User model and ECC for others (like Activity)
+const { rsaEncrypt, rsaDecrypt, eccEncrypt, eccDecrypt, decrypt } = require('../utils/cryptoUtils');
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -41,7 +41,7 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    // Modified: Encrypt email before checking for existence in the database
+    // Modified: Reverted to RSA for User email
     const existingUser = await User.findOne({ email: rsaEncrypt(email) });
     if (existingUser) {
       return res.status(400).json({ message: "Email already exists" });
@@ -82,7 +82,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email, password, and role are required' });
   }
   try {
-    // Step 1: Validate the primary credentials before issuing an OTP.
+    // Modified: Reverted to RSA for User email
       const user = await User.findOne({ email: rsaEncrypt(email) });
       if (!user) {
           return res.status(400).json({ error: 'Invalid email or password' });
@@ -93,7 +93,7 @@ router.post('/login', async (req, res) => {
           return res.status(400).json({ error: 'Invalid email or password' });
       }
 
-      // Modified: Decrypt the role from the database for comparison
+      // Modified: Reverted to RSA for User role
       const decryptedRole = rsaDecrypt(user.role);
       if (decryptedRole.toLowerCase() !== role.toLowerCase()) {
           return res.status(403).json({ error: 'Selected role does not match your account role' });
@@ -151,12 +151,11 @@ router.post('/verify-login-otp', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const decryptedName = rsaDecrypt(user.name);
     const decryptedRole = rsaDecrypt(user.role);
     const token = jwt.sign(
-      { id: user._id, name: decryptedName, role: decryptedRole },
+      { id: user._id, email: rsaDecrypt(user.email), role: decryptedRole },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '1d' }
     );
 
     delete global.loginOtpStore[email];
@@ -165,7 +164,7 @@ router.post('/verify-login-otp', async (req, res) => {
       message: 'Login successful',
       token,
       role: decryptedRole,
-      name: decryptedName,
+      name: rsaDecrypt(user.name),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -213,8 +212,8 @@ router.put("/update", verifyToken, async (req, res) => {
     await user.save();
 
     await Activity.create({
-      userId: req.user.id,
-      action: "You updated your user information.",
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt("You updated your user information."),
     });
 
     // Modified: Decrypt the name for the response
@@ -266,8 +265,8 @@ router.put("/client/update", verifyToken, async (req, res) => {
     await user.save();
 
     await Activity.create({
-      userId: req.user.id,
-      action: "You updated your account information.",
+      userId: eccEncrypt(req.user.id),
+      action: eccEncrypt("You updated your account information."),
     });
 
     // Modified: Decrypt the name for the response
@@ -322,7 +321,10 @@ router.delete("/client/delete", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Invalid password" });
     }
 
-    await Project.deleteMany({ client: user._id });
+    const allProjects = await Project.find();
+    const userProjects = allProjects.filter(p => decrypt(p.client) === user._id.toString());
+    const projectIds = userProjects.map(p => p._id);
+    await Project.deleteMany({ _id: { $in: projectIds } });
     await User.findByIdAndDelete(user._id);
 
     res.status(200).json({ message: "Account and associated projects deleted successfully" });
@@ -433,30 +435,28 @@ router.get("/check/:id", verifyToken, async (req, res) => {
 
 router.get("/allfreelancers", async (req, res) => {
   try {
-    const freelancers = await User.aggregate([
-      {
-        $lookup: {
-          from: "freelancerinformations",
-          localField: "_id",
-          foreignField: "userId",
-          as: "profile",
-        },
-      },
-      {
-        // Modified: Match against the encrypted role
-        $match: {
-          role: rsaEncrypt("Freelancer"),
-          "profile.0": { $exists: true },
-        },
-      },
-    ]);
+    const freelancers = await User.find({ role: rsaEncrypt("Freelancer") });
+    const allFreelancerInfo = await freelancerInformation.find();
+    
+    const freelancersWithProfiles = freelancers.map(f => {
+        const profile = allFreelancerInfo.find(p => decrypt(p.userId) === f._id.toString());
+        return profile ? { ...f.toObject(), profile: [profile.toObject()] } : null;
+    }).filter(f => f !== null);
 
-    // Modified: Decrypt the results before sending to the client
-    const decryptedFreelancers = freelancers.map(f => ({
+    // Modified: Reverted User fields to RSA, but kept profile (FreelancerInformation) decryption for next step
+    // Modified: Reverted User fields to RSA
+    const decryptedFreelancers = freelancersWithProfiles.map(f => ({
         ...f,
         name: rsaDecrypt(f.name),
         email: rsaDecrypt(f.email),
-        role: rsaDecrypt(f.role)
+        role: rsaDecrypt(f.role),
+        // Modified: Reverted profile fields to RSA
+        profile: (f.profile || []).map(p => ({
+            ...p,
+            skills: Array.isArray(p.skills) ? p.skills.map(s => rsaDecrypt(s ?? "")) : [],
+            portfolio: rsaDecrypt(p.portfolio ?? ""),
+            experience: rsaDecrypt(p.experience ?? ""),
+        })),
     }));
 
     res.status(200).json(decryptedFreelancers);
@@ -481,7 +481,8 @@ router.post("/verify-otp", async (req, res) => {
     }
 
     // New Change: Salt is generated and included automatically by bcrypt.hash
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
     // Modified: Encrypt data before saving to the database
     const user = new User({
@@ -521,7 +522,9 @@ router.post("/check-email", async (req, res) => {
 
 router.get("/unread-count", verifyToken, async (req, res) => {
   try {
-    const unreadCount = await Notification.countDocuments({ user: req.user.id, read: false });
+    const userId = req.user.id;
+    const allNotifications = await Notification.find({ read: false });
+    const unreadCount = allNotifications.filter(n => decrypt(n.user) === userId).length;
     res.status(200).json({ unreadCount });
   } catch (error) {
     console.error("Error fetching unread notifications count:", error);

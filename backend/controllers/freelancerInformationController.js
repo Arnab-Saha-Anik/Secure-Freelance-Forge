@@ -1,17 +1,32 @@
 const express = require("express");
 const router = express.Router();
+const bcrypt = require("bcrypt");
 const FreelancerInformation = require("../models/freelancerInformationModel");
 const User = require("../models/userModel");
-const { verifyToken } = require("../middleware/authMiddleware"); 
-const Activity = require("../models/activityModel"); // Import the Activity model
+const { verifyToken } = require("../middleware/authMiddleware");
+const Activity = require("../models/activityModel");
+// Modified: Use RSA for FreelancerInformation and ECC for others
+const { rsaEncrypt, rsaDecrypt, eccEncrypt, eccDecrypt, decrypt } = require('../utils/cryptoUtils');
 
 router.get("/:userId", verifyToken, async (req, res) => {
   try {
-    const freelancerInformation = await FreelancerInformation.findOne({ userId: req.params.userId });
+    const allFreelancerInformation = await FreelancerInformation.find();
+    const freelancerInformation = allFreelancerInformation.find(fi => decrypt(fi.userId) === req.params.userId);
     if (!freelancerInformation) {
       return res.status(404).json({ error: "Freelancer profile not found" });
     }
-    res.json(freelancerInformation);
+    // Modified: Reverted to RSA for FreelancerInformation fields
+    res.json({
+      _id: freelancerInformation._id,
+      userId: freelancerInformation.userId,
+      skills: freelancerInformation.skills.map(s => rsaDecrypt(s ?? "")),
+      portfolio: rsaDecrypt(freelancerInformation.portfolio ?? ""),
+      experience: rsaDecrypt(freelancerInformation.experience ?? ""),
+      // Modified: Decrypt numeric stats
+      earnings: rsaDecrypt(freelancerInformation.earnings ?? ""),
+      reviews: rsaDecrypt(freelancerInformation.reviews ?? ""),
+      projectsCompleted: rsaDecrypt(freelancerInformation.projectsCompleted ?? ""),
+    });
   } catch (err) {
     res.status(500).json({ error: "Server error" });
   }
@@ -20,7 +35,8 @@ router.get("/:userId", verifyToken, async (req, res) => {
 
 router.get("/check/:userId", verifyToken, async (req, res) => {
   try {
-    const freelancerInformation = await FreelancerInformation.findOne({ userId: req.params.userId });
+    const allFreelancerInformation = await FreelancerInformation.find();
+    const freelancerInformation = allFreelancerInformation.find(fi => decrypt(fi.userId) === req.params.userId);
     if (freelancerInformation) {
       return res.json({ exists: true });
     }
@@ -36,35 +52,44 @@ router.post("/", verifyToken, async (req, res) => {
   const { userId, skills, portfolio, experience } = req.body;
 
   try {
-
- 
-    const existingProfile = await FreelancerInformation.findOne({ userId });
+    const allFreelancerInformation = await FreelancerInformation.find();
+    const existingProfile = allFreelancerInformation.find(fi => decrypt(fi.userId) === userId);
     if (existingProfile) {
       return res.status(400).json({ error: "Freelancer profile already exists" });
     }
 
-
+    // Modified: Use ECC for userId and RSA for other FreelancerInformation fields
     const freelancerInformation = new FreelancerInformation({
-      userId,
-      skills,
-      portfolio,
-      experience,
-      earnings: 0,
-      reviews: 0,
-      projectsCompleted: 0,
+      userId: eccEncrypt(userId),
+      skills: Array.isArray(skills) ? skills.map(s => rsaEncrypt(s ?? "")) : [rsaEncrypt(skills ?? "")],
+      portfolio: rsaEncrypt(portfolio ?? ""),
+      experience: rsaEncrypt(experience ?? ""),
+      earnings: rsaEncrypt("0"),
+      reviews: rsaEncrypt("0"),
+      projectsCompleted: rsaEncrypt("0"),
     });
 
     await freelancerInformation.save();
 
     // Log the activity
     await Activity.create({
-      userId,
-      action: "You created your freelancer profile.",
+      userId: eccEncrypt(userId),
+      action: eccEncrypt("You created your freelancer profile."),
     });
 
-    res.status(201).json(freelancerInformation);
+    // Modified: Reverted to RSA for response
+    res.status(201).json({
+      _id: freelancerInformation._id,
+      userId: freelancerInformation.userId,
+      skills: freelancerInformation.skills.map(s => rsaDecrypt(s ?? "")),
+      portfolio: rsaDecrypt(freelancerInformation.portfolio ?? ""),
+      experience: rsaDecrypt(freelancerInformation.experience ?? ""),
+      earnings: rsaDecrypt(freelancerInformation.earnings ?? ""),
+      reviews: rsaDecrypt(freelancerInformation.reviews ?? ""),
+      projectsCompleted: rsaDecrypt(freelancerInformation.projectsCompleted ?? ""),
+    });
   } catch (err) {
-    console.error("Error creating freelancer profile:", err); // Log the error
+    console.error("Error creating freelancer profile:", err);
     res.status(500).json({ error: err.message || "Server error" });
   }
 });
@@ -74,23 +99,37 @@ router.put("/:userId", verifyToken, async (req, res) => {
   const { skills, portfolio, experience } = req.body;
 
   try {
-    const freelancerInformation = await FreelancerInformation.findOneAndUpdate(
-      { userId: req.params.userId },
-      { skills, portfolio, experience },
-      { new: true }
-    );
+    const allFreelancerInformation = await FreelancerInformation.find();
+    const freelancerInformation = allFreelancerInformation.find(fi => decrypt(fi.userId) === req.params.userId);
 
     if (!freelancerInformation) {
       return res.status(404).json({ error: "Freelancer profile not found" });
     }
 
+    freelancerInformation.skills = Array.isArray(skills) ? skills.map(s => rsaEncrypt(s ?? "")) : [rsaEncrypt(skills ?? "")];
+    freelancerInformation.portfolio = rsaEncrypt(portfolio ?? "");
+    freelancerInformation.experience = rsaEncrypt(experience ?? "");
+
+    await freelancerInformation.save();
+
     // Log the activity
     await Activity.create({
-      userId: req.params.userId,
-      action: "You updated your freelancer profile.",
+      userId: eccEncrypt(req.params.userId),
+      action: eccEncrypt("You updated your freelancer profile."),
     });
 
-    res.json(freelancerInformation);
+    // Modified: Decrypt fields for the response (guarded with ?? "")
+    res.json({
+      _id: freelancerInformation._id,
+      userId: freelancerInformation.userId,
+      skills: freelancerInformation.skills.map(s => rsaDecrypt(s ?? "")),
+      portfolio: rsaDecrypt(freelancerInformation.portfolio ?? ""),
+      experience: rsaDecrypt(freelancerInformation.experience ?? ""),
+      // Modified: Decrypt numeric stats
+      earnings: rsaDecrypt(freelancerInformation.earnings ?? ""),
+      reviews: rsaDecrypt(freelancerInformation.reviews ?? ""),
+      projectsCompleted: rsaDecrypt(freelancerInformation.projectsCompleted ?? ""),
+    });
   } catch (err) {
     console.error("Error updating freelancer profile:", err);
     res.status(500).json({ error: "Server error" });
@@ -102,22 +141,22 @@ router.delete("/delete", verifyToken, async (req, res) => {
   const { email, password } = req.body;
 
   try {
-
-    const user = await User.findOne({ email });
+    // Modified: Encrypt email to find the user in the database
+    const user = await User.findOne({ email: rsaEncrypt(email) });
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ error: "Invalid password" });
     }
 
-
-    await FreelancerInformation.findOneAndDelete({ userId: user._id });
-
-
+    const allFreelancerInformation = await FreelancerInformation.find();
+    const freelancerInfo = allFreelancerInformation.find(fi => decrypt(fi.userId) === user._id.toString());
+    if (freelancerInfo) {
+      await FreelancerInformation.findByIdAndDelete(freelancerInfo._id);
+    }
     await User.findByIdAndDelete(user._id);
 
     res.json({ message: "Account and freelancer profile deleted successfully" });
@@ -130,17 +169,18 @@ router.delete("/delete", verifyToken, async (req, res) => {
 
 router.get("/stats/:userId", verifyToken, async (req, res) => {
   try {
-    const freelancerInfo = await FreelancerInformation.findOne({ userId: req.params.userId });
+    const allFreelancerInformation = await FreelancerInformation.find();
+    const freelancerInfo = allFreelancerInformation.find(fi => decrypt(fi.userId) === req.params.userId);
     
     if (!freelancerInfo) {
       return res.status(404).json({ error: "Freelancer profile not found" });
     }
     
-    // Return just the stats needed for the dashboard
+    // Modified: Decrypt numeric stats before returning
     res.json({
-      earnings: freelancerInfo.earnings,
-      projectsCompleted: freelancerInfo.projectsCompleted,
-      reviews: freelancerInfo.reviews
+      earnings: rsaDecrypt(freelancerInfo.earnings ?? ""),
+      projectsCompleted: rsaDecrypt(freelancerInfo.projectsCompleted ?? ""),
+      reviews: rsaDecrypt(freelancerInfo.reviews ?? ""),
     });
   } catch (err) {
     console.error("Error fetching freelancer stats:", err);
