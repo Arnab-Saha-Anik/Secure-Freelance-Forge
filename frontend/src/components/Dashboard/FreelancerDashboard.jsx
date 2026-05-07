@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { handleGlobalLogout } from "../../utils/logout";
+import ChatWindow from "../Chat/ChatWindow";
 
 const styles = {
   container: { backgroundColor: "#593D3D", color: "#FFFFFF", minHeight: "100vh", padding: "20px", fontFamily: "Arial, sans-serif" },
@@ -73,6 +74,12 @@ const FreelancerDashboard = () => {
   const token = localStorage.getItem("freelancerToken");
   const userId = token ? JSON.parse(atob(token.split(".")[1])).id : null; 
 
+  // Chat state
+  const [activeChatUser, setActiveChatUser] = useState(null); // { id, name }
+  const [showMessages, setShowMessages] = useState(false);
+  const [inbox, setInbox] = useState([]);
+  const [loadingInbox, setLoadingInbox] = useState(false);
+
   const fetchProjects = useCallback(async () => {
     try {
       const response = await fetch("http://localhost:5000/projects", {
@@ -139,6 +146,23 @@ const FreelancerDashboard = () => {
 
     fetchUserInfo(); 
   }, [navigate, userId, token]);
+
+  const fetchInbox = useCallback(async () => {
+    setLoadingInbox(true);
+    try {
+      const res = await fetch("http://localhost:5000/messages/inbox", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInbox(data);
+      }
+    } catch (err) {
+      console.error("Error fetching inbox:", err);
+    } finally {
+      setLoadingInbox(false);
+    }
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -1054,11 +1078,22 @@ const FreelancerDashboard = () => {
                 <button
                   onClick={() => {
                     setShowActivityHistory(!showActivityHistory);
-                    if (!showActivityHistory) fetchActivityLogs(); // Fetch activity logs when toggling
+                    if (!showActivityHistory) fetchActivityLogs();
                   }}
                   style={styles.dropdownItem}
                 >
                   Activity History
+                </button>
+              </li>
+              <li style={{ marginTop: "10px" }}>
+                <button
+                  onClick={() => {
+                    setShowMessages(!showMessages);
+                    if (!showMessages) fetchInbox();
+                  }}
+                  style={styles.dropdownItem}
+                >
+                  💬 Messages
                 </button>
               </li>
               <li style={{ marginTop: "10px" }}>
@@ -1290,6 +1325,27 @@ const FreelancerDashboard = () => {
         View Reviews {project.client && clientReviewCounts[project.client._id] > 0 ? 
           `(${clientReviewCounts[project.client._id]})` : ""}
       </button>
+      {project.client && (
+        <button
+          onClick={() => setActiveChatUser({
+            id: typeof project.client === 'object' ? project.client._id : project.client,
+            name: project.client?.name || project.client?.email || "Client"
+          })}
+          style={{
+            padding: "10px 15px",
+            backgroundColor: "#6c3483",
+            color: "#FFFFFF",
+            border: "none",
+            borderRadius: "5px",
+            cursor: "pointer",
+            fontWeight: "bold",
+            display: "block",
+            margin: "0 auto 10px"
+          }}
+        >
+          💬 Message Client
+        </button>
+      )}
       {project.approvalStatus === "Rejected" ? (
   <div>
     <p style={{ color: "#DC3545", fontWeight: "bold" }}>Approval Rejected</p>
@@ -2118,6 +2174,74 @@ const FreelancerDashboard = () => {
     )}
   </div>
 )}
+
+    {/* Messages Inbox Panel */}
+    {showMessages && (
+      <div style={{
+        position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+        backgroundColor: "#1a1a2e", borderRadius: "16px", padding: "24px",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.6)", zIndex: 2000, width: "420px",
+        maxHeight: "80vh", display: "flex", flexDirection: "column",
+        border: "1px solid rgba(255,255,255,0.1)", color: "#fff",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+          <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>💬 Messages</h3>
+          <button onClick={() => setShowMessages(false)} style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: "50%", width: "30px", height: "30px", color: "#fff", cursor: "pointer", fontSize: "14px" }}>✕</button>
+        </div>
+        {loadingInbox ? (
+          <p style={{ textAlign: "center", color: "rgba(255,255,255,0.5)" }}>Loading messages...</p>
+        ) : inbox.length === 0 ? (
+          <p style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: "14px" }}>No conversations yet.</p>
+        ) : (
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            {inbox.map((conv) => (
+              <div
+                key={conv.conversationId}
+                onClick={() => {
+                  setActiveChatUser({ id: conv.otherId, name: conv.otherName });
+                  setShowMessages(false);
+                }}
+                style={{
+                  padding: "14px 16px", marginBottom: "8px", borderRadius: "12px",
+                  background: "rgba(255,255,255,0.06)", cursor: "pointer",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  transition: "background 0.2s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(108,52,131,0.4)"}
+                onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.06)"}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1, minWidth: 0 }}>
+                  <div style={{ width: "40px", height: "40px", borderRadius: "50%", flexShrink: 0, background: "linear-gradient(135deg, #f39c12, #e74c3c)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "16px" }}>
+                    {conv.otherName?.[0]?.toUpperCase() || "?"}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "2px" }}>{conv.otherName}</div>
+                    <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{conv.lastMessage}</div>
+                  </div>
+                </div>
+                {conv.unreadCount > 0 && (
+                  <div style={{ background: "#8e44ad", borderRadius: "12px", padding: "2px 8px", fontSize: "12px", fontWeight: "bold", flexShrink: 0, marginLeft: "8px" }}>
+                    {conv.unreadCount}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Chat Window */}
+    {activeChatUser && (
+      <ChatWindow
+        currentUserId={userId}
+        currentUserToken={token}
+        otherUserId={activeChatUser.id}
+        otherUserName={activeChatUser.name}
+        onClose={() => setActiveChatUser(null)}
+      />
+    )}
     </div>
   );
 };

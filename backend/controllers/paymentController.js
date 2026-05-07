@@ -270,8 +270,9 @@ router.post("/claim-money/:projectId", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Escrow is not funded for this project." });
     }
 
-    // Validate acceptedmoney
-    if (!project.acceptedmoney || isNaN(project.acceptedmoney)) {
+    // Validate acceptedmoney - decrypt first before numeric check
+    const decryptedAcceptedMoney = eccDecrypt(project.acceptedmoney);
+    if (!decryptedAcceptedMoney || isNaN(parseFloat(decryptedAcceptedMoney))) {
       return res.status(400).json({ error: "Invalid accepted money amount." });
     }
 
@@ -306,7 +307,6 @@ router.post("/claim-money/:projectId", verifyToken, async (req, res) => {
 
     res.status(200).json({ url: session.url });
     // Modified: Encrypt activity log and userId
-    const decryptedAcceptedMoney = eccDecrypt(project.acceptedmoney);
     const decryptedTitle = eccDecrypt(project.title);
     await Activity.create({
       userId: project.acceptedFreelancer, // Already encrypted
