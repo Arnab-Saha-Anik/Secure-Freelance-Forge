@@ -120,7 +120,7 @@ router.post("/webhook", async (req, res) => {
                 project: eccEncrypt(projectId),
                 client: eccEncrypt(clientId),
                 amount: eccEncrypt(amount.toString()),
-                status: "Succeeded",
+                status: eccEncrypt("Succeeded"),
                 paymentIntentId: eccEncrypt(session.id),
               });
               await payment.save();
@@ -153,7 +153,7 @@ router.post("/webhook", async (req, res) => {
               payment.client = project.client;
               payment.freelancer = project.acceptedFreelancer;
               payment.amount = project.acceptedmoney;
-              payment.status = "Freelancer Paid";
+              payment.status = eccEncrypt("Freelancer Paid");
               payment.paymentIntentId = project.paymentIntentId;
               await payment.save();
             } else {
@@ -162,7 +162,7 @@ router.post("/webhook", async (req, res) => {
                 client: project.client,
                 freelancer: project.acceptedFreelancer,
                 amount: project.acceptedmoney,
-                status: "Freelancer Paid",
+                status: eccEncrypt("Freelancer Paid"),
                 paymentIntentId: project.paymentIntentId,
               });
             }
@@ -215,7 +215,7 @@ router.post("/webhook", async (req, res) => {
             const payment = allPayments.find(p => decrypt(p.project) === project._id.toString());
             
             if (payment) {
-              payment.status = "Failed";
+              payment.status = eccEncrypt("Failed");
               await payment.save();
             }
             
@@ -484,7 +484,7 @@ router.get("/verify-session/:sessionId", verifyToken, async (req, res) => {
           project: eccEncrypt(projectId),
           client: eccEncrypt(clientId),
           amount: eccEncrypt(amount.toString()),
-          status: "Succeeded",
+          status: eccEncrypt("Succeeded"),
           paymentIntentId: eccEncrypt(session.id),
         });
         await payment.save();
@@ -506,7 +506,7 @@ router.get("/verify-session/:sessionId", verifyToken, async (req, res) => {
         const allPayments = await Payment.find();
         const payment = allPayments.find(p => decrypt(p.project) === project._id.toString());
         if (payment) {
-          payment.status = "Failed";
+          payment.status = eccEncrypt("Failed");
           await payment.save();
         }
 
@@ -526,7 +526,7 @@ router.get("/verify-session/:sessionId", verifyToken, async (req, res) => {
         const allPayments = await Payment.find();
         let payment = allPayments.find(p => decrypt(p.project) === project._id.toString());
         if (payment) {
-          payment.status = "Freelancer Paid";
+          payment.status = eccEncrypt("Freelancer Paid");
           await payment.save();
         }
 
@@ -574,6 +574,7 @@ router.get("/", verifyToken, async (req, res) => {
       return {
         ...payment.toObject(),
         amount: decrypt(payment.amount),
+        status: decrypt(payment.status),
         paymentIntentId: decrypt(payment.paymentIntentId),
         project: project ? {
           ...project.toObject(),

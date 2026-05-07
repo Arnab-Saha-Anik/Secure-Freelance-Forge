@@ -15,6 +15,7 @@ router.get("/", verifyToken, async (req, res) => {
     const decryptedNotifications = notifications.map(notification => ({
       ...notification.toObject(),
       message: eccDecrypt(notification.message),
+      read: decrypt(notification.read) === "true",
     }));
 
     res.status(200).json(decryptedNotifications);
@@ -28,10 +29,10 @@ router.get("/", verifyToken, async (req, res) => {
 router.put("/mark-as-read", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const allNotifications = await Notification.find({ read: false });
-    const userNotifications = allNotifications.filter(n => decrypt(n.user) === userId);
+    const allNotifications = await Notification.find();
+    const userNotifications = allNotifications.filter(n => decrypt(n.user) === userId && decrypt(n.read) !== "true");
     const notificationIds = userNotifications.map(n => n._id);
-    await Notification.updateMany({ _id: { $in: notificationIds } }, { read: true });
+    await Notification.updateMany({ _id: { $in: notificationIds } }, { read: eccEncrypt("true") });
     res.status(200).json({ message: "Notifications marked as read." });
   } catch (error) {
     console.error("Error marking notifications as read:", error);

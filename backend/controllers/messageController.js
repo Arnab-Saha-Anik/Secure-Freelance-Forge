@@ -15,24 +15,29 @@ router.post("/send", verifyToken, async (req, res) => {
   try {
     const { receiverId, content } = req.body;
     const senderId = req.user.id;
+    let decryptedReceiverId = decrypt(receiverId);
+    if (decryptedReceiverId && typeof decryptedReceiverId === 'string' && decryptedReceiverId.startsWith('ecc_')) {
+      decryptedReceiverId = decrypt(decryptedReceiverId);
+    }
 
-    if (!receiverId || !content || !content.trim()) {
+    if (!decryptedReceiverId || !content || !content.trim()) {
       return res.status(400).json({ error: "receiverId and content are required." });
     }
 
     // Verify receiver exists
-    const receiver = await User.findById(receiverId);
+    const receiver = await User.findById(decryptedReceiverId);
     if (!receiver) {
       return res.status(404).json({ error: "Receiver not found." });
     }
 
-    const conversationId = buildConversationId(senderId, receiverId);
+    const conversationId = buildConversationId(senderId, decryptedReceiverId);
 
     const message = await Message.create({
       conversationId: eccEncrypt(conversationId),
       senderId: eccEncrypt(senderId),
-      receiverId: eccEncrypt(receiverId),
+      receiverId: eccEncrypt(decryptedReceiverId),
       content: eccEncrypt(content.trim()),
+      read: eccEncrypt("false"),
     });
 
     res.status(201).json({
@@ -72,7 +77,7 @@ router.get("/conversation/:otherId", verifyToken, async (req, res) => {
         senderId: decrypt(msg.senderId),
         receiverId: decrypt(msg.receiverId),
         content: decrypt(msg.content),
-        read: msg.read,
+        read: decrypt(msg.read) === "true",
         createdAt: msg.createdAt,
         updatedAt: msg.updatedAt,
       }))
@@ -84,7 +89,7 @@ router.get("/conversation/:otherId", verifyToken, async (req, res) => {
       .map((m) => m._id);
 
     if (unreadIds.length > 0) {
-      await Message.updateMany({ _id: { $in: unreadIds } }, { read: true });
+      await Message.updateMany({ _id: { $in: unreadIds } }, { read: eccEncrypt("true") });
     }
 
     res.status(200).json(conversation);
@@ -109,7 +114,7 @@ router.get("/inbox", verifyToken, async (req, res) => {
         senderId: decrypt(msg.senderId),
         receiverId: decrypt(msg.receiverId),
         content: decrypt(msg.content),
-        read: msg.read,
+        read: decrypt(msg.read) === "true",
         createdAt: msg.createdAt,
       }))
       .filter((msg) => msg.senderId === myId || msg.receiverId === myId)
@@ -119,7 +124,10 @@ router.get("/inbox", verifyToken, async (req, res) => {
     const convMap = {};
     for (const msg of myMessages) {
       if (!convMap[msg.conversationId]) {
-        const otherId = msg.senderId === myId ? msg.receiverId : msg.senderId;
+        let otherId = msg.senderId === myId ? msg.receiverId : msg.senderId;
+        if (otherId && typeof otherId === 'string' && otherId.startsWith('ecc_')) {
+          otherId = decrypt(otherId);
+        }
         const otherUser = await User.findById(otherId).select("name email");
         convMap[msg.conversationId] = {
           conversationId: msg.conversationId,
@@ -148,10 +156,10 @@ router.get("/inbox", verifyToken, async (req, res) => {
 router.get("/unread-count", verifyToken, async (req, res) => {
   try {
     const myId = req.user.id;
-    const allMessages = await Message.find({ read: false });
+    const allMessages = await Message.find();
 
     const count = allMessages.filter(
-      (msg) => decrypt(msg.receiverId) === myId
+      (msg) => decrypt(msg.receiverId) === myId && decrypt(msg.read) !== "true"
     ).length;
 
     res.status(200).json({ count });

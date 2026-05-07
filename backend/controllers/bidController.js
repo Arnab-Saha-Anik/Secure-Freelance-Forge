@@ -15,11 +15,9 @@ const { eccEncrypt, eccDecrypt, rsaDecrypt, decrypt } = require('../utils/crypto
 // Route to fetch accepted bids
 router.get("/accepted", verifyToken, async (req, res) => {
   try {
-    const userId = req.user.id; // Assuming `verifyToken` adds `user` to `req`
-    const allBids = await Bid.find({ status: "accepted" });
-    
-    // Modified: Filter by decrypted freelancerId and decrypt projects
-    const filteredBids = allBids.filter(b => decrypt(b.freelancerId) === userId);
+    const userId = req.user.id;
+    const allBids = await Bid.find();
+    const filteredBids = allBids.filter(b => decrypt(b.freelancerId) === userId && decrypt(b.status) === "accepted");
     
     const decryptedBids = await Promise.all(filteredBids.map(async (bid) => {
       const decryptedProjectId = decrypt(bid.projectId);
@@ -128,6 +126,7 @@ router.get("/:projectId", verifyToken, async (req, res) => {
         return {
           ...bid.toObject(),
           amount: decrypt(bid.amount),
+          status: decrypt(bid.status),
           freelancerId: {
             ...freelancer.toObject(),
             name: rsaDecrypt(freelancer.name),
@@ -158,13 +157,12 @@ router.get("/:projectId", verifyToken, async (req, res) => {
 router.get("/:projectId/my-bid", verifyToken, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const freelancerId = req.user.id; // Assuming `verifyToken` adds `user` to `req`
-
+    const freelancerId = req.user.id;
     const allBids = await Bid.find();
-    const bidsForProject = allBids.filter(b => decrypt(b.projectId) === projectId);
-    const bid = bidsForProject.find(b => decrypt(b.freelancerId) === freelancerId);
+    const bid = allBids.find(b => decrypt(b.projectId) === projectId && decrypt(b.freelancerId) === freelancerId);
+
     if (!bid) {
-      return res.status(404).json({ error: "No bid found for this project." });
+      return res.status(404).json({ error: "Bid not found." });
     }
 
     res.status(200).json({
@@ -208,6 +206,7 @@ router.post("/:projectId/bid", verifyToken, async (req, res) => {
       projectId: eccEncrypt(projectId),
       freelancerId: eccEncrypt(freelancerId),
       amount: eccEncrypt(bidAmount.toString()),
+      status: eccEncrypt("pending"),
     });
 
     const freelancer = await User.findById(req.user.id).select("email");
@@ -222,6 +221,7 @@ router.post("/:projectId/bid", verifyToken, async (req, res) => {
     await Notification.create({
       user: project.client, // Already encrypted
       message: eccEncrypt(`A new bid of $${bidAmount} has been placed on your project "${decryptedTitle}".`),
+      read: eccEncrypt("false"),
     });
 
     res.status(201).json({ message: "Bid submitted successfully.", bid: newBid });
@@ -259,10 +259,15 @@ router.put("/select/:bidId", verifyToken, async (req, res) => {
     project.status = eccEncrypt("selected");
     await project.save();
 
+    // Also update bid status
+    bid.status = eccEncrypt("selected");
+    await bid.save();
+
     // Notify the freelancer - Modified: Decrypt ID and message
     await Notification.create({
       user: decrypt(bid.freelancerId),
       message: eccEncrypt(`Your bid of $${decrypt(bid.amount)} for the project "${decrypt(project.title)}" has been selected.`),
+      read: eccEncrypt("false"),
     });
 
     // Log the activity for the client - Modified: Decrypt IDs and messages
@@ -303,6 +308,10 @@ router.put("/accept/:bidId", verifyToken, async (req, res) => {
       acceptedmoney: bid.amount, // Already encrypted
     });
 
+    // Also update bid status
+    bid.status = eccEncrypt("accepted");
+    await bid.save();
+
     // Delete all other bids for the project
     const allBids = await Bid.find();
     const otherBids = allBids.filter(b => decrypt(b.projectId) === decryptedProjectId);
@@ -326,6 +335,7 @@ router.put("/accept/:bidId", verifyToken, async (req, res) => {
     await Notification.create({
       user: project.client, // Already encrypted
       message: eccEncrypt(`${rsaDecrypt(freelancer.email)} has accepted the project "${decrypt(project.title)}" for $${decrypt(bid.amount)}.`),
+      read: eccEncrypt("false"),
     });
 
     res.status(200).json({ message: "Bid accepted successfully.", bid });
@@ -369,6 +379,7 @@ router.delete("/reject/:bidId", verifyToken, async (req, res) => {
     await Notification.create({
       user: project.client, // Already encrypted
       message: eccEncrypt(`The selected bid for your project "${decrypt(project.title)}" has been rejected by the freelancer.`),
+      read: eccEncrypt("false"),
     });
 
     // Log the activity for the freelancer
@@ -424,6 +435,7 @@ router.put("/:bidId", verifyToken, async (req, res) => {
     await Notification.create({
       user: project.client, // Already encrypted
       message: eccEncrypt(`A freelancer has updated their bid for project "${decrypt(project.title)}".`),
+      read: eccEncrypt("false"),
     });
 
     res.status(200).json({ message: "Bid updated successfully.", bid });

@@ -32,6 +32,7 @@ cron.schedule("0 0 * * *", async () => {
       await Notification.create({
         user: project.client, // Already encrypted in DB
         message: eccEncrypt(`The deadline for your project "${decrypt(project.title)}" has passed.`),
+        read: eccEncrypt("false"),
       });
 
     }
@@ -652,6 +653,7 @@ router.put("/approve-completion/:projectId", verifyToken, async (req, res) => {
     await Notification.create({
       user: project.acceptedFreelancer, // Already encrypted
       message: eccEncrypt(`Your work on project "${decryptedTitle}" has been approved! You can now claim payment.`),
+      read: eccEncrypt("false"),
     });
 
     // Log activity for client

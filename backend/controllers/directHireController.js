@@ -66,6 +66,7 @@ router.post("/", verifyToken, async (req, res) => {
     await Notification.create({
       user: eccEncrypt(freelancerId),
       message: eccEncrypt(`You have been offered to be hired for the project "${decryptedTitle}".`),
+      read: eccEncrypt("false"),
     });
 
     res.status(200).json({ message: "Freelancer has been offered to hire successfully.", directHire });
@@ -238,6 +239,7 @@ router.put("/accept/:id", verifyToken, async (req, res) => {
     await Notification.create({
       user: directHire.clientId, // Already encrypted
       message: eccEncrypt(`Freelancer (${rsaDecrypt(freelancer.email)}) has accepted your project "${decrypt(project.title)}".`),
+      read: eccEncrypt("false"),
     });
 
     res.status(200).json({ message: "Direct hire accepted successfully." });
@@ -287,6 +289,7 @@ router.delete("/reject/:id", verifyToken, async (req, res) => {
     await Notification.create({
       user: directHire.clientId, // Already encrypted
       message: eccEncrypt(`Freelancer (${rsaDecrypt(freelancer.email)}) has rejected your hire offer for the project "${decrypt(project.title)}".`),
+      read: eccEncrypt("false"),
     });
 
     // Delete the direct hire record

@@ -15,6 +15,7 @@ router.post("/", verifyToken, async (req, res) => {
   try {
     const { projectId, receiverId, rating, comment } = req.body;
     const reviewerId = req.user.id;
+    const decryptedReceiverId = decrypt(receiverId);
 
     // Check if project exists and is approved
     const project = await Project.findById(projectId);
@@ -34,14 +35,14 @@ router.post("/", verifyToken, async (req, res) => {
 
     if (projectClientStr === reviewerIdStr) {
       reviewerType = "client";
-      if (decrypt(receiverId) !== projectFreelancerStr) {
+      if (decryptedReceiverId !== projectFreelancerStr) {
         return res.status(403).json({ 
           error: "You can only review the freelancer assigned to this project"
         });
       }
     } else if (projectFreelancerStr === reviewerIdStr) {
       reviewerType = "freelancer";
-      if (decrypt(receiverId) !== projectClientStr) {
+      if (decryptedReceiverId !== projectClientStr) {
         return res.status(403).json({ 
           error: "You can only review the client of this project"
         });
@@ -64,16 +65,16 @@ router.post("/", verifyToken, async (req, res) => {
     const review = new Review({
       projectId: eccEncrypt(projectId),
       reviewerId: eccEncrypt(reviewerIdStr),
-      receiverId: eccEncrypt(receiverId.toString()),
+      receiverId: eccEncrypt(decryptedReceiverId),
       rating: eccEncrypt(rating.toString()),
       comment: eccEncrypt(comment),
-      reviewerType,
+      reviewerType: eccEncrypt(reviewerType),
     });
 
     await review.save();
 
     // Send notification to the receiver
-    const receiver = await User.findById(receiverId);
+    const receiver = await User.findById(decryptedReceiverId);
     if (receiver) {
       let message;
       const decryptedTitle = eccDecrypt(project.title);
@@ -84,8 +85,9 @@ router.post("/", verifyToken, async (req, res) => {
       }
       // Modified: Encrypt notification message and userId
       await Notification.create({
-        user: eccEncrypt(receiverId.toString()),
+        user: eccEncrypt(decryptedReceiverId),
         message: eccEncrypt(message),
+        read: eccEncrypt("false"),
       });
     }
 
@@ -97,7 +99,7 @@ router.post("/", verifyToken, async (req, res) => {
       
       if (freelancerInfo) {
         const allReviews = await Review.find();
-        const receiverReviews = allReviews.filter(r => decrypt(r.receiverId) === receiverId.toString() && r.reviewerType === "client");
+        const receiverReviews = allReviews.filter(r => decrypt(r.receiverId) === decryptedReceiverId && r.reviewerType === "client");
         // Modified: Decrypt ECC ratings for average calculation
         const avgRating = receiverReviews.reduce((sum, r) => sum + parseFloat(decrypt(r.rating)), 0) / receiverReviews.length;
         // Modified: Reverted to RSA for storing average rating in FreelancerInformation
@@ -129,23 +131,39 @@ router.post("/", verifyToken, async (req, res) => {
 // Get reviews for a specific user (as received reviews)
 router.get("/received/:userId", verifyToken, async (req, res) => {
   try {
+    const userId = decrypt(req.params.userId);
     const allReviews = await Review.find();
-    const filteredReviews = allReviews.filter(r => decrypt(r.receiverId) === req.params.userId);
+    const filteredReviews = allReviews.filter(r => decrypt(r.receiverId) === userId);
     
     // Modified: Decrypt reviews and manually fetch reviewer info since refs are broken
     const decryptedReviews = await Promise.all(filteredReviews.map(async (r) => {
-      const decryptedReviewerId = decrypt(r.reviewerId);
+      let decryptedReviewerId = decrypt(r.reviewerId);
+      if (decryptedReviewerId && typeof decryptedReviewerId === 'string' && decryptedReviewerId.startsWith('ecc_')) {
+        decryptedReviewerId = decrypt(decryptedReviewerId);
+      }
       const reviewer = await User.findById(decryptedReviewerId).select("name email");
       
       return {
         ...r.toObject(),
         rating: decrypt(r.rating),
         comment: decrypt(r.comment),
+        reviewerType: decrypt(r.reviewerType),
         reviewerId: reviewer ? {
           ...reviewer.toObject(),
           name: rsaDecrypt(reviewer.name),
           email: rsaDecrypt(reviewer.email),
         } : null,
+        projectId: await (async () => {
+          let decProjectId = decrypt(r.projectId);
+          if (decProjectId && typeof decProjectId === 'string' && decProjectId.startsWith('ecc_')) {
+            decProjectId = decrypt(decProjectId);
+          }
+          const project = await Project.findById(decProjectId).select("title");
+          return project ? {
+            ...project.toObject(),
+            title: decrypt(project.title),
+          } : null;
+        })(),
       };
     }));
 
@@ -159,19 +177,29 @@ router.get("/received/:userId", verifyToken, async (req, res) => {
 // Get reviews submitted by a user
 router.get("/submitted/:userId", verifyToken, async (req, res) => {
   try {
+    const userId = decrypt(req.params.userId);
     const allReviews = await Review.find().sort({ createdAt: -1 });
-    const filteredReviews = allReviews.filter(r => decrypt(r.reviewerId) === req.params.userId);
+    const filteredReviews = allReviews.filter(r => decrypt(r.reviewerId) === userId);
     
     // Modified: Decrypt reviews, manually fetch receivers, and decrypt project titles
     const decryptedReviews = await Promise.all(filteredReviews.map(async (r) => {
-      const decryptedReceiverId = decrypt(r.receiverId);
+      let decryptedReceiverId = decrypt(r.receiverId);
+      if (decryptedReceiverId && typeof decryptedReceiverId === 'string' && decryptedReceiverId.startsWith('ecc_')) {
+        decryptedReceiverId = decrypt(decryptedReceiverId);
+      }
       const receiver = await User.findById(decryptedReceiverId).select("name email");
-      const project = await Project.findById(decrypt(r.projectId)).select("title");
+      
+      let decProjectId = decrypt(r.projectId);
+      if (decProjectId && typeof decProjectId === 'string' && decProjectId.startsWith('ecc_')) {
+        decProjectId = decrypt(decProjectId);
+      }
+      const project = await Project.findById(decProjectId).select("title");
       
       return {
         ...r.toObject(),
         rating: decrypt(r.rating),
         comment: decrypt(r.comment),
+        reviewerType: decrypt(r.reviewerType),
         receiverId: receiver ? {
           ...receiver.toObject(),
           name: rsaDecrypt(receiver.name),
@@ -199,8 +227,15 @@ router.get("/project/:projectId", verifyToken, async (req, res) => {
     
     // Modified: Decrypt reviews, manually fetch reviewers, and receivers
     const decryptedReviews = await Promise.all(projectReviews.map(async (r) => {
-      const decryptedReviewerId = decrypt(r.reviewerId);
-      const decryptedReceiverId = decrypt(r.receiverId);
+      let decryptedReviewerId = decrypt(r.reviewerId);
+      if (decryptedReviewerId && typeof decryptedReviewerId === 'string' && decryptedReviewerId.startsWith('ecc_')) {
+        decryptedReviewerId = decrypt(decryptedReviewerId);
+      }
+
+      let decryptedReceiverId = decrypt(r.receiverId);
+      if (decryptedReceiverId && typeof decryptedReceiverId === 'string' && decryptedReceiverId.startsWith('ecc_')) {
+        decryptedReceiverId = decrypt(decryptedReceiverId);
+      }
       
       const reviewer = await User.findById(decryptedReviewerId).select("name email");
       const receiver = await User.findById(decryptedReceiverId).select("name email");
@@ -209,6 +244,7 @@ router.get("/project/:projectId", verifyToken, async (req, res) => {
         ...r.toObject(),
         rating: decrypt(r.rating),
         comment: decrypt(r.comment),
+        reviewerType: decrypt(r.reviewerType),
         reviewerId: reviewer ? {
           ...reviewer.toObject(),
           name: rsaDecrypt(reviewer.name),
@@ -219,6 +255,17 @@ router.get("/project/:projectId", verifyToken, async (req, res) => {
           name: rsaDecrypt(receiver.name),
           email: rsaDecrypt(receiver.email),
         } : null,
+        projectId: await (async () => {
+          let decProjectId = decrypt(r.projectId);
+          if (decProjectId && typeof decProjectId === 'string' && decProjectId.startsWith('ecc_')) {
+            decProjectId = decrypt(decProjectId);
+          }
+          const project = await Project.findById(decProjectId).select("title");
+          return project ? {
+            ...project.toObject(),
+            title: decrypt(project.title),
+          } : null;
+        })(),
       };
     }));
 
