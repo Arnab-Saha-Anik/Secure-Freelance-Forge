@@ -6,6 +6,7 @@ const messageSchema = new mongoose.Schema(
     senderId: { type: String, required: true },
     receiverId: { type: String, required: true },
     content: { type: String, required: true },
+    mac: { type: String, required: true },
     read: { type: String }, // Modified: String for ECC encryption
   },
   { timestamps: true }

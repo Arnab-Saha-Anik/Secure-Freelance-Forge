@@ -178,6 +178,9 @@ const ChatWindow = ({ currentUserId, currentUserToken, otherUserId, otherUserNam
                   color: "#fff", fontSize: "13px", lineHeight: "1.5",
                   wordBreak: "break-word",
                 }}>
+                  <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.7)", marginBottom: "4px" }}>
+                    {item.senderName || (isMine ? "You" : otherUserName || "Unknown")} → {item.receiverName || (isMine ? otherUserName || "Unknown" : "You")}
+                  </div>
                   <div>{item.content}</div>
                   <div style={{
                     fontSize: "10px", color: "rgba(255,255,255,0.5)",
