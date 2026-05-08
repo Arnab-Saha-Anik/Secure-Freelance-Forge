@@ -172,7 +172,7 @@ router.post('/verify-login-otp', async (req, res) => {
 });
 
 router.put("/update", verifyToken, async (req, res) => {
-  const { name, currentPassword, newPassword, confirmPassword } = req.body;
+  const { name, currentPassword, newPassword, confirmPassword, newEmail } = req.body;
 
   try {
     const user = await User.findById(req.user.id);
@@ -180,8 +180,26 @@ router.put("/update", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    if (!name && !currentPassword && !newPassword && !confirmPassword) {
+    if (!name && !currentPassword && !newPassword && !confirmPassword && !newEmail) {
       return res.status(400).json({ error: "No changes detected" });
+    }
+
+    if (newEmail && newEmail !== rsaDecrypt(user.email)) {
+      const existingUser = await User.findOne({ email: rsaEncrypt(newEmail) });
+      if (existingUser) {
+        return res.status(400).json({ error: "Email already in use" });
+      }
+
+      const otp = generateOTP();
+      global.emailUpdateOtpStore = global.emailUpdateOtpStore || {};
+      global.emailUpdateOtpStore[req.user.id] = {
+        newEmail,
+        otp,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      };
+
+      await sendOtpEmail(newEmail, otp);
+      return res.status(202).json({ message: "OTP sent to your new email. Please verify to complete the change." });
     }
 
     if (currentPassword) {
@@ -203,7 +221,6 @@ router.put("/update", verifyToken, async (req, res) => {
       }
     }
     
-    // Modified: Encrypt the name if it's being updated
     if (name && name !== rsaDecrypt(user.name)) {
       user.name = rsaEncrypt(name);
     }
@@ -215,7 +232,6 @@ router.put("/update", verifyToken, async (req, res) => {
       action: eccEncrypt("You updated your user information."),
     });
 
-    // Modified: Decrypt the name for the response
     res.json({ message: "Profile updated successfully", name: rsaDecrypt(user.name) });
   } catch (err) {
     console.error("Error updating user information:", err);
@@ -224,7 +240,7 @@ router.put("/update", verifyToken, async (req, res) => {
 });
 
 router.put("/client/update", verifyToken, async (req, res) => {
-  const { name, currentPassword, newPassword, confirmPassword } = req.body;
+  const { name, currentPassword, newPassword, confirmPassword, newEmail } = req.body;
 
   try {
     const user = await User.findById(req.user.id);
@@ -232,8 +248,26 @@ router.put("/client/update", verifyToken, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    if (!name && !currentPassword && !newPassword && !confirmPassword) {
+    if (!name && !currentPassword && !newPassword && !confirmPassword && !newEmail) {
       return res.status(400).json({ error: "No changes detected" });
+    }
+
+    if (newEmail && newEmail !== rsaDecrypt(user.email)) {
+      const existingUser = await User.findOne({ email: rsaEncrypt(newEmail) });
+      if (existingUser) {
+        return res.status(400).json({ error: "Email already in use" });
+      }
+
+      const otp = generateOTP();
+      global.emailUpdateOtpStore = global.emailUpdateOtpStore || {};
+      global.emailUpdateOtpStore[req.user.id] = {
+        newEmail,
+        otp,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      };
+
+      await sendOtpEmail(newEmail, otp);
+      return res.status(202).json({ message: "OTP sent to your new email. Please verify to complete the change." });
     }
 
     if (currentPassword) {
@@ -255,7 +289,6 @@ router.put("/client/update", verifyToken, async (req, res) => {
       }
     }
 
-    // Modified: Encrypt the name if it's being updated
     if (name && name !== rsaDecrypt(user.name)) {
       user.name = rsaEncrypt(name);
     }
@@ -267,10 +300,51 @@ router.put("/client/update", verifyToken, async (req, res) => {
       action: eccEncrypt("You updated your account information."),
     });
 
-    // Modified: Decrypt the name for the response
     res.status(200).json({ message: "Profile updated successfully", name: rsaDecrypt(user.name) });
   } catch (err) {
     console.error("Error updating account information:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/verify-email-update-otp", verifyToken, async (req, res) => {
+  const { otp } = req.body;
+  const userId = req.user.id;
+
+  try {
+    if (!global.emailUpdateOtpStore || !global.emailUpdateOtpStore[userId]) {
+      return res.status(400).json({ error: "OTP expired or invalid." });
+    }
+
+    const { newEmail, otp: storedOtp, expiresAt } = global.emailUpdateOtpStore[userId];
+
+    if (expiresAt < Date.now()) {
+      delete global.emailUpdateOtpStore[userId];
+      return res.status(400).json({ error: "OTP expired." });
+    }
+
+    if (storedOtp !== otp) {
+      return res.status(400).json({ error: "Invalid OTP." });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    user.email = rsaEncrypt(newEmail);
+    await user.save();
+
+    delete global.emailUpdateOtpStore[userId];
+
+    await Activity.create({
+      userId: eccEncrypt(userId),
+      action: eccEncrypt(`You updated your email to ${newEmail}.`),
+    });
+
+    res.status(200).json({ message: "Email updated successfully.", newEmail });
+  } catch (err) {
+    console.error("Error verifying email update OTP:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

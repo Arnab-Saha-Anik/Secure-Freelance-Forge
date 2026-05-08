@@ -45,6 +45,8 @@ const VerifyOTP = () => {
         } else if (response.data.role?.toLowerCase() === "client") {
           localStorage.setItem("clientToken", response.data.token);
           navigate("/client-dashboard");
+        } else if (response.data.role?.toLowerCase() === "admin") {
+          navigate("/admin-dashboard");
         }
         return;
       }

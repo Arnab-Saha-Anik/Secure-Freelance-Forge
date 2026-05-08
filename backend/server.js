@@ -37,6 +37,8 @@ app.use("/learning-materials", learningMaterialController); // Add the learning 
 app.use("/payments", paymentController); // Add the payment routes
 app.use("/reviews", reviewRoutes); // Add the review routes
 app.use("/messages", messageController); // Add the message routes
+const adminController = require("./controllers/adminController");
+app.use("/admin", adminController);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () =>

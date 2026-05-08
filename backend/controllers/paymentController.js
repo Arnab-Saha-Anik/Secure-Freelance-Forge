@@ -141,8 +141,8 @@ router.post("/webhook", async (req, res) => {
 
         case "claim-money":
           {
-            // Modified: Decrypt project acceptedmoney and title for logs
-            const decryptedAcceptedMoney = eccDecrypt(project.acceptedmoney);
+            // Modified: Decrypt project acceptedmoney or fallback to budget
+            const decryptedAcceptedMoney = eccDecrypt(project.acceptedmoney || project.budget);
             const decryptedTitle = eccDecrypt(project.title);
 
             // Update payment
@@ -152,7 +152,7 @@ router.post("/webhook", async (req, res) => {
             if (payment) {
               payment.client = project.client;
               payment.freelancer = project.acceptedFreelancer;
-              payment.amount = project.acceptedmoney;
+              payment.amount = project.acceptedmoney || project.budget;
               payment.status = eccEncrypt("Freelancer Paid");
               payment.paymentIntentId = project.paymentIntentId;
               await payment.save();
@@ -161,7 +161,7 @@ router.post("/webhook", async (req, res) => {
                 project: eccEncrypt(project._id.toString()),
                 client: project.client,
                 freelancer: project.acceptedFreelancer,
-                amount: project.acceptedmoney,
+                amount: project.acceptedmoney || project.budget,
                 status: eccEncrypt("Freelancer Paid"),
                 paymentIntentId: project.paymentIntentId,
               });
@@ -271,9 +271,9 @@ router.post("/claim-money/:projectId", verifyToken, async (req, res) => {
     }
 
     // Validate acceptedmoney - decrypt first before numeric check
-    const decryptedAcceptedMoney = eccDecrypt(project.acceptedmoney);
+    const decryptedAcceptedMoney = eccDecrypt(project.acceptedmoney || project.budget);
     if (!decryptedAcceptedMoney || isNaN(parseFloat(decryptedAcceptedMoney))) {
-      return res.status(400).json({ error: "Invalid accepted money amount." });
+      return res.status(400).json({ error: "Invalid money amount." });
     }
 
     // Generate a Stripe Checkout session for the freelancer to claim money
@@ -287,8 +287,8 @@ router.post("/claim-money/:projectId", verifyToken, async (req, res) => {
               // Modified: Decrypt title for display
               name: `Claim Money for Project: ${eccDecrypt(project.title)}`,
             },
-            // Modified: Decrypt acceptedmoney for amount calculation
-            unit_amount: Math.round(parseFloat(eccDecrypt(project.acceptedmoney)) * 100),
+            // Modified: Decrypt acceptedmoney or fallback to budget for amount calculation
+            unit_amount: Math.round(parseFloat(eccDecrypt(project.acceptedmoney || project.budget)) * 100),
           },
           quantity: 1,
         },
@@ -301,7 +301,7 @@ router.post("/claim-money/:projectId", verifyToken, async (req, res) => {
         paymentIntentId: decrypt(project.paymentIntentId),
         freelancerId: decrypt(project.acceptedFreelancer),
         action: "claim-money",
-        amount: eccDecrypt(project.acceptedmoney),
+        amount: eccDecrypt(project.acceptedmoney || project.budget),
       },
     });
 
@@ -530,10 +530,22 @@ router.get("/verify-session/:sessionId", verifyToken, async (req, res) => {
           await payment.save();
         }
 
+        // Update freelancer earnings
+        const decryptedAcceptedMoney = eccDecrypt(project.acceptedmoney || project.budget);
+        const freelancerId = decrypt(project.acceptedFreelancer);
+        const allFreelancerInfo = await FreelancerInformation.find();
+        const freelancerInfo = allFreelancerInfo.find(fi => decrypt(fi.userId) === freelancerId);
+
+        if (freelancerInfo) {
+          const currentEarnings = parseFloat(rsaDecrypt(freelancerInfo.earnings ?? "")) || 0;
+          freelancerInfo.earnings = rsaEncrypt(String(currentEarnings + parseFloat(decryptedAcceptedMoney)));
+          await freelancerInfo.save();
+        }
+
         // Activity log
         await Activity.create({
           userId: project.acceptedFreelancer,
-          action: eccEncrypt(`Claim of $${eccDecrypt(project.acceptedmoney)} for project "${eccDecrypt(project.title)}" verified successfully.`),
+          action: eccEncrypt(`Claim of $${decryptedAcceptedMoney} for project "${eccDecrypt(project.title)}" verified successfully.`),
         });
 
         return res.status(200).json({ message: "Claim verified successfully.", project });

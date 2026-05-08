@@ -17,10 +17,14 @@ const FreelancerProfile = () => {
 
   const [userInfo, setUserInfo] = useState({
     name: "",
+    email: "",
     currentPassword: "",
     newPassword: "",
     confirmPassword: "",
   });
+  const [showEmailOtpModal, setShowEmailOtpModal] = useState(false);
+  const [emailOtp, setEmailOtp] = useState("");
+  const [newEmailToVerify, setNewEmailToVerify] = useState("");
 
   const [deleteAccountInfo, setDeleteAccountInfo] = useState({
     email: "",
@@ -92,11 +96,13 @@ const FreelancerProfile = () => {
           setUserInfo((prev) => ({
             ...prev,
             name: userData.name || "Not given",
+            email: userData.email || "",
           }));
           setOriginalUserInfo({
             name: userData.name || "Not given",
+            email: userData.email || "",
           });
-          setLoggedInUserEmail(userData.email); // Store the logged-in user's email
+          setLoggedInUserEmail(userData.email);
         }
       } catch (err) {
         console.error("Error fetching profile data:", err);
@@ -245,6 +251,16 @@ const FreelancerProfile = () => {
 
   const handleUserInfoSubmit = async (e) => {
     e.preventDefault();
+
+    if (
+      userInfo.name === originalUserInfo.name &&
+      userInfo.email === originalUserInfo.email &&
+      !userInfo.newPassword
+    ) {
+      alert("No changes detected.");
+      return;
+    }
+
     try {
       const response = await fetch(`http://localhost:5000/users/update`, {
         method: "PUT",
@@ -254,17 +270,20 @@ const FreelancerProfile = () => {
         },
         body: JSON.stringify({
           name: userInfo.name,
+          newEmail: userInfo.email !== originalUserInfo.email ? userInfo.email : undefined,
           currentPassword: userInfo.currentPassword,
           newPassword: userInfo.newPassword,
           confirmPassword: userInfo.confirmPassword,
         }),
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
+      if (response.status === 202) {
+        setNewEmailToVerify(userInfo.email);
+        setShowEmailOtpModal(true);
+      } else if (response.ok) {
+        const data = await response.json();
         alert("User information updated successfully!");
-        setOriginalUserInfo({ name: userInfo.name }); // Update original values
+        setOriginalUserInfo({ name: data.name, email: userInfo.email });
         setUserInfo((prev) => ({
           ...prev,
           currentPassword: "",
@@ -272,11 +291,42 @@ const FreelancerProfile = () => {
           confirmPassword: "",
         }));
       } else {
+        const data = await response.json();
         alert(data.error || "Failed to update user information.");
       }
     } catch (err) {
       console.error("Error updating user information:", err);
       alert("An error occurred.");
+    }
+  };
+
+  const handleEmailOtpSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await fetch(`http://localhost:5000/users/verify-email-update-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ otp: emailOtp }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        alert("Email updated successfully!");
+        setShowEmailOtpModal(false);
+        setEmailOtp("");
+        setOriginalUserInfo((prev) => ({ ...prev, email: data.newEmail }));
+        setUserInfo((prev) => ({ ...prev, email: data.newEmail, currentPassword: "", newPassword: "", confirmPassword: "" }));
+        setLoggedInUserEmail(data.newEmail);
+      } else {
+        const data = await response.json();
+        alert(data.error || "Invalid OTP.");
+      }
+    } catch (error) {
+      console.error("Error verifying email OTP:", error);
+      alert("An error occurred during verification.");
     }
   };
 
@@ -354,7 +404,9 @@ const FreelancerProfile = () => {
 
   const isFreelancerInfoChanged = JSON.stringify(freelancerInfo) !== JSON.stringify(originalFreelancerInfo);
   const isUserInfoChanged =
-    userInfo.name !== originalUserInfo.name || userInfo.newPassword.trim() !== "";
+    userInfo.name !== originalUserInfo.name || 
+    userInfo.email !== originalUserInfo.email ||
+    userInfo.newPassword.trim() !== "";
 
   return (
     <div style={{ padding: "20px", maxWidth: "600px", margin: "0 auto" }}>
@@ -487,6 +539,17 @@ const FreelancerProfile = () => {
           />
         </div>
         <div style={{ marginBottom: "10px" }}>
+          <label>Email:</label>
+          <input
+            type="email"
+            name="email"
+            value={userInfo.email}
+            onChange={handleUserInfoChange}
+            style={{ width: "100%", padding: "8px", marginTop: "5px" }}
+            placeholder="Enter your email"
+          />
+        </div>
+        <div style={{ marginBottom: "10px" }}>
           <label>Current Password:</label>
           <input
             type="password"
@@ -566,6 +629,43 @@ const FreelancerProfile = () => {
           Delete Account
         </button>
       </form>
+
+      {showEmailOtpModal && (
+        <div style={{
+          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+          backgroundColor: "#fff", padding: "30px", borderRadius: "10px", boxShadow: "0 0 20px rgba(0,0,0,0.3)",
+          zIndex: 3000, width: "350px", textAlign: "center", color: "#000"
+        }}>
+          <h3 style={{ color: "#333", marginBottom: "20px" }}>Verify New Email</h3>
+          <p style={{ fontSize: "14px", color: "#666", marginBottom: "20px" }}>
+            An OTP has been sent to <strong>{newEmailToVerify}</strong>. Please enter it below to confirm the change.
+          </p>
+          <form onSubmit={handleEmailOtpSubmit}>
+            <input
+              type="text"
+              placeholder="Enter 6-digit OTP"
+              value={emailOtp}
+              onChange={(e) => setEmailOtp(e.target.value)}
+              style={{
+                width: "100%", padding: "12px", marginBottom: "20px",
+                borderRadius: "5px", border: "1px solid #ddd", textAlign: "center", fontSize: "18px", letterSpacing: "4px"
+              }}
+              maxLength="6"
+              required
+            />
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button type="submit" style={{
+                flex: 1, padding: "10px", backgroundColor: "#28a745", color: "#fff",
+                border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold"
+              }}>Verify</button>
+              <button type="button" onClick={() => { setShowEmailOtpModal(false); setEmailOtp(""); }} style={{
+                flex: 1, padding: "10px", backgroundColor: "#dc3545", color: "#fff",
+                border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold"
+              }}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

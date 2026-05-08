@@ -109,9 +109,15 @@ async function run() {
         await generateRSAKey();
         await generateECCKey();
         console.log("All keys generated successfully.");
+        return { success: true, message: "All keys generated successfully." };
     } catch (error) {
         console.error("Error during key generation:", error);
+        return { success: false, error: error.message };
     }
 }
 
-run();
+if (require.main === module) {
+    run();
+}
+
+module.exports = { run };

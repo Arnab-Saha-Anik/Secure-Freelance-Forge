@@ -96,4 +96,48 @@ router.delete("/:id", verifyToken, async (req, res) => {
   }
 });
 
+// PUT: Update a learning material by ID (Private Access with Token)
+router.put("/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, link } = req.body;
+
+    // Validate the material ID
+    if (!id || id.length !== 24) {
+      return res.status(400).json({ error: "Invalid learning material ID." });
+    }
+
+    // Modified: Decrypt role for admin check
+    const user = await User.findById(req.user.id);
+    if (!user || rsaDecrypt(user.role).toLowerCase() !== "admin") {
+      return res.status(403).json({ error: "Unauthorized. Only admins can edit learning materials." });
+    }
+
+    const material = await LearningMaterial.findById(id);
+    if (!material) {
+      return res.status(404).json({ error: "Learning material not found." });
+    }
+
+    // Modified: Update and encrypt fields if provided
+    if (title) material.title = eccEncrypt(title);
+    if (description) material.description = eccEncrypt(description);
+    if (link) material.link = eccEncrypt(link);
+
+    await material.save();
+
+    res.status(200).json({
+      message: "Learning material updated successfully.",
+      material: {
+        ...material.toObject(),
+        title: eccDecrypt(material.title),
+        description: eccDecrypt(material.description),
+        link: eccDecrypt(material.link),
+      }
+    });
+  } catch (err) {
+    console.error("Error updating learning material:", err);
+    res.status(500).json({ error: "Failed to update learning material." });
+  }
+});
+
 module.exports = router;

@@ -24,13 +24,8 @@ const AdminLogin = () => {
 
       if (response.ok) {
         const data = await response.json();
-        if (data.role.toLowerCase() === "admin") {
-          localStorage.setItem("token", data.token); // Save the token in localStorage
-          alert("Login successful!");
-          navigate("/admin-dashboard"); // Redirect to the admin dashboard
-        } else {
-          alert("Access denied. You are not an admin.");
-        }
+        alert(data.message || "OTP sent to your email.");
+        navigate("/verify-otp", { state: { email: data.email, mode: "login" } });
       } else {
         const errorData = await response.json();
         alert(errorData.error || "Invalid email or password.");

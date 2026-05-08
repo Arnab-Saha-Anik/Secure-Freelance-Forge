@@ -15,12 +15,16 @@ const ClientDashboard = () => {
     deadline: "",
   });
   const [accountInfo, setAccountInfo] = useState({
+    name: "",
+    email: "",
     currentPassword: "",
     newPassword: "",
     confirmNewPassword: "",
-    name: "",
   });
-  const [originalAccountInfo, setOriginalAccountInfo] = useState({});
+  const [originalAccountInfo, setOriginalAccountInfo] = useState({ name: "", email: "" });
+  const [showEmailOtpModal, setShowEmailOtpModal] = useState(false);
+  const [emailOtp, setEmailOtp] = useState("");
+  const [newEmailToVerify, setNewEmailToVerify] = useState("");
   const [username, setUsername] = useState("Loading...");
   const [showProjects, setShowProjects] = useState(false);
   const [showPostProject, setShowPostProject] = useState(false);
@@ -125,8 +129,9 @@ const ClientDashboard = () => {
           setAccountInfo((prev) => ({
             ...prev,
             name: data.name || "",
+            email: data.email || "",
           }));
-          setOriginalAccountInfo({ name: data.name || "" });
+          setOriginalAccountInfo({ name: data.name || "", email: data.email || "" });
           setUsername(data.name || "Client");
         } else {
           console.error("Failed to fetch account info.");
@@ -461,6 +466,7 @@ const ClientDashboard = () => {
 
     if (
       accountInfo.name === originalAccountInfo.name &&
+      accountInfo.email === originalAccountInfo.email &&
       !accountInfo.newPassword &&
       !accountInfo.confirmNewPassword
     ) {
@@ -490,17 +496,23 @@ const ClientDashboard = () => {
         },
         body: JSON.stringify({
           name: accountInfo.name,
+          newEmail: accountInfo.email !== originalAccountInfo.email ? accountInfo.email : undefined,
           currentPassword: accountInfo.currentPassword,
           newPassword: accountInfo.newPassword,
           confirmPassword: accountInfo.confirmNewPassword,
         }),
       });
 
-      if (response.ok) {
+      if (response.status === 202) {
+        setNewEmailToVerify(accountInfo.email);
+        setShowEmailOtpModal(true);
+        setPopupMessage("OTP sent to your new email. Please verify.");
+        setPopupType("success");
+      } else if (response.ok) {
         const data = await response.json();
         setPopupMessage("Account updated successfully!");
         setPopupType("success");
-        setOriginalAccountInfo({ name: data.name });
+        setOriginalAccountInfo({ name: data.name, email: accountInfo.email });
         setAccountInfo((prev) => ({
           ...prev,
           currentPassword: "",
@@ -526,6 +538,38 @@ const ClientDashboard = () => {
     } catch (error) {
       console.error("Error updating account:", error);
       setPopupMessage("An error occurred while updating the account.");
+      setPopupType("error");
+    }
+  };
+
+  const handleEmailOtpSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await fetch(`http://localhost:5000/users/verify-email-update-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ otp: emailOtp }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setPopupMessage("Email updated successfully!");
+        setPopupType("success");
+        setShowEmailOtpModal(false);
+        setEmailOtp("");
+        setOriginalAccountInfo((prev) => ({ ...prev, email: data.newEmail }));
+        setAccountInfo((prev) => ({ ...prev, email: data.newEmail, currentPassword: "", newPassword: "", confirmNewPassword: "" }));
+      } else {
+        const data = await response.json();
+        setPopupMessage(data.error || "Invalid OTP.");
+        setPopupType("error");
+      }
+    } catch (error) {
+      console.error("Error verifying email OTP:", error);
+      setPopupMessage("An error occurred during verification.");
       setPopupType("error");
     }
   };
@@ -662,7 +706,9 @@ const ClientDashboard = () => {
   const isUpdateDisabled =
     !accountInfo.currentPassword ||
     !accountInfo.name ||
+    !accountInfo.email ||
     (accountInfo.name === originalAccountInfo.name &&
+      accountInfo.email === originalAccountInfo.email &&
       !accountInfo.newPassword &&
       !accountInfo.confirmNewPassword) ||
     accountInfo.newPassword !== accountInfo.confirmNewPassword;
@@ -1074,6 +1120,8 @@ const ClientDashboard = () => {
         </div>
       )}
 
+
+
       <div style={{ position: "absolute", top: "20px", right: "40px", display: "flex", gap: "20px" }}>
         <div>
           <button
@@ -1138,13 +1186,25 @@ const ClientDashboard = () => {
               }}
             >
               <form onSubmit={handleAccountUpdate}>
-                <div style={{ marginBottom: "10px" }}>
+                <div style={{ marginBottom: "15px" }}>
                   <label style={{ display: "block", marginBottom: "5px", textAlign: "left", color: "#333" }}>Name:</label>
                   <input
                     type="text"
                     name="name"
                     placeholder="Name"
                     value={accountInfo.name}
+                    onChange={handleAccountInfoChange}
+                    style={{padding: "10px", width: "100%",boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div style={{ marginBottom: "15px" }}>
+                  <label style={{ display: "block", marginBottom: "5px", textAlign: "left", color: "#333" }}>Email:</label>
+                  <input
+                    type="email"
+                    name="email"
+                    placeholder="Email"
+                    value={accountInfo.email}
                     onChange={handleAccountInfoChange}
                     style={{padding: "10px", width: "100%",boxSizing: "border-box",
                     }}
@@ -1199,7 +1259,7 @@ const ClientDashboard = () => {
                 <input
                   type="email"
                   name="email"
-                  placeholder="Email"
+                  placeholder="Email for Deletion"
                   value={deleteAccountInfo.email}
                   onChange={(e) =>
                     setDeleteAccountInfo({ ...deleteAccountInfo, email: e.target.value })
@@ -1277,8 +1337,6 @@ const ClientDashboard = () => {
                   Logout
                 </button>
               </div>
-
-              
             </div>
           )}
         </div>
@@ -1382,7 +1440,7 @@ const ClientDashboard = () => {
                     remainingBudget > 0 ? (
                       project.claimStatus === "Claimed" ? (
                         <div
-                          style={{ padding: "10px 20px", color: "#FFFFFF",borderRadius: "5px",fontWeight: "bold",display: "inline-block",marginRight: "10px", height: "20px", // Match button height
+                          style={{ padding: "10px 20px", color: "#FFFFFF",borderRadius: "5px",fontWeight: "bold",display: "inline-block",marginRight: "10px", height: "20px",
                           }}
                         >
                           Claimed
@@ -1415,7 +1473,7 @@ const ClientDashboard = () => {
                               alert("An error occurred while claiming the remaining budget.");
                             }
                           }}
-                          style={{ padding: "10px", backgroundColor: "#007BFF", color: "#FFFFFF", border: "none", borderRadius: "5px",cursor: "pointer",marginTop: "10px",marginRight: "10px", // Added spacing
+                          style={{ padding: "10px", backgroundColor: "#007BFF", color: "#FFFFFF", border: "none", borderRadius: "5px",cursor: "pointer",marginTop: "10px",marginRight: "10px",
                           }}
                         >
                           Claim Remaining Budget (${remainingBudget})
@@ -1429,7 +1487,7 @@ const ClientDashboard = () => {
                       <div>
                         <button
                           onClick={() => handleViewCompletion(project.completedpercentage, project.title)}
-                          style={{padding: "10px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginTop: "10px",marginRight: "10px", // Added spacing
+                          style={{padding: "10px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginTop: "10px",marginRight: "10px",
                           }}
                         >
                           View Completion Percentage
@@ -1469,7 +1527,7 @@ const ClientDashboard = () => {
                               alert("An error occurred while claiming the remaining budget.");
                             }
                           }}
-                          style={{padding: "10px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",marginTop: "10px",marginRight: "10px", // Added spacing
+                          style={{padding: "10px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",marginTop: "10px",marginRight: "10px",
                           }}
                         >
                           Claim Remaining Budget (${remainingBudget})
@@ -1493,7 +1551,7 @@ const ClientDashboard = () => {
                           </a>
                         </p>
                         <div
-                          style={{ padding: "10px", backgroundColor: "#28A745", color: "#FFFFFF",borderRadius: "5px",fontWeight: "bold",display: "inline-block",marginTop: "10px",marginRight: "10px", // Added spacing
+                          style={{ padding: "10px", backgroundColor: "#28A745", color: "#FFFFFF",borderRadius: "5px",fontWeight: "bold",display: "inline-block",marginTop: "10px",marginRight: "10px",
                           }}
                         >
                           Approved
@@ -1557,7 +1615,7 @@ const ClientDashboard = () => {
                         </p>
                         <button
                           onClick={() => handleApproveProject(project._id)}
-                          style={{  padding: "10px", backgroundColor: "#28A745",color: "#FFFFFF", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold", marginRight: "10px", // Added spacing
+                          style={{  padding: "10px", backgroundColor: "#28A745",color: "#FFFFFF", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold", marginRight: "10px",
                           }}
                         >
                           Approve Project
@@ -1569,7 +1627,7 @@ const ClientDashboard = () => {
                               handleRejectApproval(project._id, comments);
                             }
                           }}
-                          style={{padding: "10px",backgroundColor: "#DC3545",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px", // Added spacing
+                          style={{padding: "10px",backgroundColor: "#DC3545",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px",
                           }}
                         >
                           Reject Approval
@@ -1582,7 +1640,7 @@ const ClientDashboard = () => {
                       <div>
                         <button
                           onClick={() => handleApproveProject(project._id)}
-                          style={{padding: "10px",backgroundColor: "#28A745",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px", // Added spacing
+                          style={{padding: "10px",backgroundColor: "#28A745",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px",
                           }}
                         >
                           Approve Project
@@ -1594,7 +1652,7 @@ const ClientDashboard = () => {
                               handleRejectApproval(project._id, comments);
                             }
                           }}
-                          style={{padding: "10px",backgroundColor: "#DC3545",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold", marginRight: "10px", // Added spacing
+                          style={{padding: "10px",backgroundColor: "#DC3545",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold", marginRight: "10px",
                           }}
                         >
                           Reject Approval
@@ -1617,7 +1675,7 @@ const ClientDashboard = () => {
                             deadline: project.deadline.split("T")[0],
                           })
                         }
-                        style={{padding: "5px 10px",backgroundColor: "#FFC107",color: "#000000",border: "none", borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px", // Added spacing
+                        style={{padding: "5px 10px",backgroundColor: "#FFC107",color: "#000000",border: "none", borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px",
                         }}
                       >
                         Edit Project
@@ -1626,14 +1684,14 @@ const ClientDashboard = () => {
                         onClick={async () => {
                           handleDeleteProject(project._id);
                         }}
-                        style={{padding: "5px 10px",backgroundColor: "#DC3545",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointe",frontWeight: "bold", marginRight: "10px", // Added spacing
+                        style={{padding: "5px 10px",backgroundColor: "#DC3545",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold", marginRight: "10px",
 }}
                       >
                         Delete Project
                       </button>
                       <button
                         onClick={() => fetchBidsForProject(project._id, project.title)}
-                        style={{ padding: "5px 10px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px", // Added spacing
+                        style={{ padding: "5px 10px",backgroundColor: "#007BFF",color: "#FFFFFF",border: "none",borderRadius: "5px",cursor: "pointer",fontWeight: "bold",marginRight: "10px",
                         }}
                       >
                         View Bids
@@ -2342,6 +2400,43 @@ const ClientDashboard = () => {
           otherUserName={activeChatUser.name}
           onClose={() => setActiveChatUser(null)}
         />
+      )}
+
+      {showEmailOtpModal && (
+        <div style={{
+          position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+          backgroundColor: "#fff", padding: "30px", borderRadius: "10px", boxShadow: "0 0 20px rgba(0,0,0,0.3)",
+          zIndex: 3000, width: "350px", textAlign: "center"
+        }}>
+          <h3 style={{ color: "#333", marginBottom: "20px" }}>Verify New Email</h3>
+          <p style={{ fontSize: "14px", color: "#666", marginBottom: "20px" }}>
+            An OTP has been sent to <strong>{newEmailToVerify}</strong>. Please enter it below to confirm the change.
+          </p>
+          <form onSubmit={handleEmailOtpSubmit}>
+            <input
+              type="text"
+              placeholder="Enter 6-digit OTP"
+              value={emailOtp}
+              onChange={(e) => setEmailOtp(e.target.value)}
+              style={{
+                width: "100%", padding: "12px", marginBottom: "20px",
+                borderRadius: "5px", border: "1px solid #ddd", textAlign: "center", fontSize: "18px", letterSpacing: "4px"
+              }}
+              maxLength="6"
+              required
+            />
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button type="submit" style={{
+                flex: 1, padding: "10px", backgroundColor: "#28a745", color: "#fff",
+                border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold"
+              }}>Verify</button>
+              <button type="button" onClick={() => { setShowEmailOtpModal(false); setEmailOtp(""); }} style={{
+                flex: 1, padding: "10px", backgroundColor: "#dc3545", color: "#fff",
+                border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold"
+              }}>Cancel</button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );
