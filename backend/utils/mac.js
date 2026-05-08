@@ -44,7 +44,7 @@ const generateMessageMac = (parts) => {
   cipher.setAutoPadding(false);
 
   const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
-  return encrypted.slice(-BLOCK_SIZE).toString("hex");
+  return encrypted.subarray(-BLOCK_SIZE).toString("hex");
 };
 
 const verifyMessageMac = (parts, mac) => {
