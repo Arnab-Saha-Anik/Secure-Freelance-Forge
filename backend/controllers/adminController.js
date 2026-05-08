@@ -245,6 +245,40 @@ router.post("/verify-email-otp", async (req, res) => {
     }
 });
 
+// GET: Fetch all projects with decrypted data
+router.get("/projects", async (req, res) => {
+  try {
+    const Project = require("../models/projectModel");
+    const projects = await Project.find();
+    const decryptedProjects = projects.map(p => ({
+      ...p.toObject(),
+      title: decrypt(p.title),
+      description: decrypt(p.description),
+      budget: decrypt(p.budget),
+      deadline: decrypt(p.deadline),
+      status: decrypt(p.status),
+      escrowStatus: decrypt(p.escrowStatus),
+      client: decrypt(p.client)
+    }));
+    res.status(200).json(decryptedProjects);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch projects." });
+  }
+});
+
+// DELETE: Delete any project
+router.delete("/projects/:id", async (req, res) => {
+  try {
+    const Project = require("../models/projectModel");
+    const { id } = req.params;
+    const project = await Project.findByIdAndDelete(id);
+    if (!project) return res.status(404).json({ error: "Project not found" });
+    res.status(200).json({ message: "Project deleted successfully." });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete project." });
+  }
+});
+
 // GET: Health check for keys and system status
 router.get("/health", async (req, res) => {
   try {

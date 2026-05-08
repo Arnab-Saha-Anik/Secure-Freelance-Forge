@@ -235,29 +235,7 @@ router.delete("/:id", async (req, res) => {
 });
 
 
-router.delete("/admin/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    
-    if (!id || id.length !== 24) {
-      return res.status(400).json({ message: "Invalid project ID" });
-    }
-
-    
-    const project = await Project.findByIdAndDelete(id);
-    if (!project) {
-      return res.status(404).json({ message: "Project not found" });
-    }
-
-    res.status(200).json({ message: "Project deleted successfully" });
-  } catch (err) {
-    console.error("Error deleting project:", err);
-    res.status(500).json({ message: "Error deleting project", error: err.message });
-  }
-});
-
-
+// Client-only projects fetch
 router.get("/client/projects", verifyToken, async (req, res) => {
   try {
     const clientId = req.user.id; 

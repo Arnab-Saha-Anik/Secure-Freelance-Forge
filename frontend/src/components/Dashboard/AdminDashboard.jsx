@@ -7,6 +7,7 @@ const AdminDashboard = () => {
   const [users, setUsers] = useState([]);
   const [activities, setActivities] = useState([]);
   const [learningMaterials, setLearningMaterials] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [profile, setProfile] = useState({ name: "", email: "" });
   const [editingMaterial, setEditingMaterial] = useState(null);
   const [newMaterial, setNewMaterial] = useState({ title: "", description: "", link: "" });
@@ -62,6 +63,26 @@ const AdminDashboard = () => {
       setActivities(res.data);
     } catch (err) {
       alert("Error fetching activities");
+    }
+  };
+
+  const fetchProjects = async () => {
+    try {
+      const res = await api.get("/projects");
+      setProjects(res.data);
+    } catch (err) {
+      alert("Error fetching projects");
+    }
+  };
+
+  const handleDeleteProject = async (id) => {
+    if (window.confirm("Delete this project?")) {
+      try {
+        await api.delete(`/projects/${id}`);
+        fetchProjects();
+      } catch (err) {
+        alert("Error deleting project");
+      }
     }
   };
 
@@ -189,6 +210,7 @@ const AdminDashboard = () => {
         <nav style={styles.nav}>
           <button onClick={() => setActiveTab("overview")} style={activeTab === "overview" ? styles.activeNavLink : styles.navLink}>Overview</button>
           <button onClick={() => { setActiveTab("users"); fetchUsers(); }} style={activeTab === "users" ? styles.activeNavLink : styles.navLink}>Users</button>
+          <button onClick={() => { setActiveTab("projects"); fetchProjects(); }} style={activeTab === "projects" ? styles.activeNavLink : styles.navLink}>Projects</button>
           <button onClick={() => { setActiveTab("materials"); fetchLearningMaterials(); }} style={activeTab === "materials" ? styles.activeNavLink : styles.navLink}>Learning Materials</button>
           <button onClick={() => { setActiveTab("audit"); fetchActivities(); }} style={activeTab === "audit" ? styles.activeNavLink : styles.navLink}>Audit Logs</button>
           <button onClick={() => setActiveTab("security")} style={activeTab === "security" ? styles.activeNavLink : styles.navLink}>Security</button>
@@ -253,6 +275,28 @@ const AdminDashboard = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {activeTab === "projects" && (
+            <div style={styles.card}>
+              <h3>All Platform Projects</h3>
+              <table style={styles.table}>
+                <thead>
+                  <tr><th>Title</th><th>Description</th><th>Budget</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {projects.map(p => (
+                    <tr key={p._id}>
+                      <td>{p.title}</td>
+                      <td>{p.description}</td>
+                      <td>${p.budget}</td>
+                      <td>{p.status}</td>
+                      <td><button onClick={() => handleDeleteProject(p._id)} style={styles.btnDanger}>Delete</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 
