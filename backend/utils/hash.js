@@ -1,5 +1,4 @@
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
 
 const SHA512_PREFIX = 'sha512';
 const HASH_ITERATIONS = 120000;
@@ -63,9 +62,6 @@ const comparePassword = async (plainPassword, storedHash) => {
         return false;
     }
 
-    if (storedHash.startsWith('$2')) {
-        return bcrypt.compare(String(plainPassword), storedHash);
-    }
 
     if (storedHash.startsWith(`${SHA512_PREFIX}$`) || storedHash.startsWith(`${SHA512_PREFIX}:`)) {
         return compareSha512(plainPassword, storedHash);

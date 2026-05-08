@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { handleGlobalLogout } from "../../utils/logout";
 import ChatWindow from "../Chat/ChatWindow";
@@ -79,6 +79,7 @@ const FreelancerDashboard = () => {
   const [showMessages, setShowMessages] = useState(false);
   const [inbox, setInbox] = useState([]);
   const [loadingInbox, setLoadingInbox] = useState(false);
+  const hasAlertedInboxRef = useRef(false);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -156,6 +157,12 @@ const FreelancerDashboard = () => {
       if (res.ok) {
         const data = await res.json();
         setInbox(data);
+      } else if (res.status === 409) {
+        if (!hasAlertedInboxRef.current) {
+          setPopupMessage("Data integrity violation detected in your inbox! Please contact support.");
+          setShowPopup(true);
+          hasAlertedInboxRef.current = true;
+        }
       }
     } catch (err) {
       console.error("Error fetching inbox:", err);

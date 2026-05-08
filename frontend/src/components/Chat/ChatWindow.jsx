@@ -7,6 +7,7 @@ const ChatWindow = ({ currentUserId, currentUserToken, otherUserId, otherUserNam
   const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef(null);
   const pollRef = useRef(null);
+  const hasAlertedRef = useRef(false);
 
   const fetchMessages = useCallback(async () => {
     if (!otherUserId) return;
@@ -15,9 +16,15 @@ const ChatWindow = ({ currentUserId, currentUserToken, otherUserId, otherUserNam
         `http://localhost:5000/messages/conversation/${otherUserId}`,
         { headers: { Authorization: `Bearer ${currentUserToken}` } }
       );
+      console.log(`[DEBUG] fetchMessages status: ${res.status} for otherUserId: ${otherUserId}`);
       if (res.ok) {
         const data = await res.json();
         setMessages(data);
+      } else if (res.status === 409) {
+        if (!hasAlertedRef.current) {
+          alert("Data integrity violation detected! Some messages in this conversation may have been tampered with.");
+          hasAlertedRef.current = true;
+        }
       }
     } catch (err) {
       console.error("Error fetching messages:", err);
@@ -27,6 +34,7 @@ const ChatWindow = ({ currentUserId, currentUserToken, otherUserId, otherUserNam
   }, [otherUserId, currentUserToken]);
 
   useEffect(() => {
+    hasAlertedRef.current = false;
     fetchMessages();
     pollRef.current = setInterval(fetchMessages, 3000);
     return () => clearInterval(pollRef.current);

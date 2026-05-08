@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { loadStripe } from "@stripe/stripe-js";
 import ChatWindow from "../Chat/ChatWindow";
@@ -70,6 +70,7 @@ const ClientDashboard = () => {
   const [showMessages, setShowMessages] = useState(false);
   const [inbox, setInbox] = useState([]);
   const [loadingInbox, setLoadingInbox] = useState(false);
+  const hasAlertedInboxRef = useRef(false);
 
   const token = localStorage.getItem("clientToken");
   const loggedInClientId = token ? JSON.parse(atob(token.split(".")[1])).id : null;
@@ -200,6 +201,14 @@ const ClientDashboard = () => {
       if (res.ok) {
         const data = await res.json();
         setInbox(data);
+        // Optional: Reset if you want it to pop up again if a new violation occurs after a fix
+        // hasAlertedInboxRef.current = false; 
+      } else if (res.status === 409) {
+        if (!hasAlertedInboxRef.current) {
+          setPopupMessage("Data integrity violation detected in your inbox! Please contact support.");
+          setPopupType("error");
+          hasAlertedInboxRef.current = true;
+        }
       }
     } catch (err) {
       console.error("Error fetching inbox:", err);

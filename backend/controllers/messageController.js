@@ -115,6 +115,7 @@ router.get("/conversation/:otherId", verifyToken, async (req, res) => {
     conversation.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
     const tamperedMessage = conversation.find((msg) => msg.macValid === false);
+    console.log(`[DEBUG] /conversation/:otherId - Found ${conversation.length} messages. Tampered: ${!!tamperedMessage}`);
 
     if (tamperedMessage) {
       return res.status(409).json({ error: "Message integrity check failed." });
