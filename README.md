@@ -10,7 +10,7 @@ PORT=5000
 
 MONGO_URI=MONGO_URI=make it from mongodb atlas
 
-# use co pilot to generate these keys given below
+MESSAGE_MAC_KEY=your_message_mac_key
 
 JWT_SECRET=your_jwt_secret
 

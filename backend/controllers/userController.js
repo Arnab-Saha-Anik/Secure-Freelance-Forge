@@ -41,7 +41,7 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    // Modified: Reverted to RSA for User email
+
     const existingUser = await User.findOne({ email: rsaEncrypt(email) });
     if (existingUser) {
       return res.status(400).json({ message: "Email already exists" });
@@ -82,7 +82,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email, password, and role are required' });
   }
   try {
-    // Modified: Reverted to RSA for User email
+
       const user = await User.findOne({ email: rsaEncrypt(email) });
       if (!user) {
           return res.status(400).json({ error: 'Invalid email or password' });
@@ -93,7 +93,7 @@ router.post('/login', async (req, res) => {
           return res.status(400).json({ error: 'Invalid email or password' });
       }
 
-      // Modified: Reverted to RSA for User role
+
       const decryptedRole = rsaDecrypt(user.role);
       if (decryptedRole.toLowerCase() !== role.toLowerCase()) {
           return res.status(403).json({ error: 'Selected role does not match your account role' });
@@ -507,7 +507,8 @@ router.get("/check/:id", verifyToken, async (req, res) => {
 
 router.get("/allfreelancers", async (req, res) => {
   try {
-    const freelancers = await User.find({ role: rsaEncrypt("Freelancer") });
+    const allUsers = await User.find();
+    const freelancers = allUsers.filter(user => decrypt(user.role).toLowerCase() === "freelancer");
     const allFreelancerInfo = await freelancerInformation.find();
     
     const freelancersWithProfiles = freelancers.map(f => {
@@ -578,7 +579,7 @@ router.post("/check-email", async (req, res) => {
   const { email } = req.body;
 
   try {
-    // Modified: Encrypt email before checking for existence
+
     const user = await User.findOne({ email: rsaEncrypt(email) });
     if (user) {
       return res.status(200).json({ exists: true });

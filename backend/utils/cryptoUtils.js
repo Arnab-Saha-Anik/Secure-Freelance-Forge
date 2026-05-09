@@ -72,7 +72,7 @@ const power = (base, exp, mod) => {
     return bigintCryptoUtils.modPow(base, exp, mod);
 };
 
-// --- ECC Algorithms (translated from Python lab) ---
+// --- ECC Algorithms ---
 
 function pointAdd(P, Q, a, p) {
     if (P === null) return Q;

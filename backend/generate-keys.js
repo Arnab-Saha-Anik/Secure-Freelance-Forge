@@ -2,15 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const bigintCryptoUtils = require('bigint-crypto-utils');
 
-/**
- * Key Generation Script
- * ---------------------
- * This script is used to generate new versioned RSA and ECC keys.
- * Run this manually from the command line when you need to create a new key
- * for the initial setup or for key rotation.
- *
- * Usage: node backend/generate-keys.js
- */
+
 
 console.log("Starting key generation process...");
 
@@ -57,7 +49,7 @@ async function generateECCKey() {
 
     console.log(`Generating new ECC key: Version ${nextVersion}`);
 
-    // ECC parameters inspired by the lab: y^2 = x^3 - 2x + 2 (mod p)
+    // y^2 = x^3 - 2x + 2 (mod p)
     // Using a large prime for practical string encryption
     let p;
     while (true) {
@@ -83,11 +75,8 @@ async function generateECCKey() {
 
     // Private key d
     const d = await bigintCryptoUtils.randBetween(p - 1n);
-    
+
     // Public key Q = dG
-    // (We need the point multiplication algorithm here, which we'll also put in cryptoUtils)
-    // For generation purposes, we'll store the generator and private key.
-    // The public key Q will be calculated during initialization in cryptoUtils.
 
     const keyData = {
         type: 'ecc',
@@ -120,4 +109,4 @@ if (require.main === module) {
     run();
 }
 
-module.exports = { run };
+module.exports = { run };
